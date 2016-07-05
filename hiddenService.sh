@@ -9,6 +9,7 @@ sed -i 's/#HiddenServiceDir \/var\/lib\/tor\/hidden_service\//HiddenServiceDir \
 sed -i 's/#HiddenServicePort 80 127.0.0.1:80/HiddenServicePort 80 127.0.0.1:8080/g' /etc/tor/torrc
 
 systemctl restart tor
+systemctl reload apache2 || systemctl restart apache2 
 
 ##Retrieve hostname
 hostname=$(cat /var/lib/tor/hidden_service/hostname)
