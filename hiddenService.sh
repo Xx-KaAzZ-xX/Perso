@@ -15,4 +15,9 @@ systemctl reload apache2 || systemctl restart apache2
 hostname=$(cat /var/lib/tor/hidden_service/hostname)
 echo "This is your hidden hostname : $hostname"
 
+##Clear history
+cd
+> ~/.bash_history
+history -c
+
 exit 0
