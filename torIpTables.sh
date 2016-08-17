@@ -6,7 +6,7 @@ echo 'nameserver 127.0.0.1'
 #destinations you don’t want routed through Tor
 _non_tor='192.168.1.0/24 192.168.0.0/24'
 #the UID that Tor runs as (varies from system to system)
-_tor_uid='136'
+_tor_uid=$(/etc/init.d/tor status | grep Main | awk '{print $3}')
 
 #Tor’s TransPort
 _trans_port='9040'
