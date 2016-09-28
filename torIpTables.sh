@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo 'nameserver 127.0.0.1'
+echo 'nameserver 127.0.0.1' > /etc/resolv.conf
 
 ### set variables
 #destinations you don’t want routed through Tor
@@ -36,4 +36,18 @@ done
 
 #allow only Tor output
 iptables -A OUTPUT -m owner --uid-owner $_tor_uid -j ACCEPT
-iptables -A OUTPUT -j REJECT 
+iptables -A OUTPUT -j REJECT
+
+##Test
+nslookup google.fr > /dev/null 2>&1
+test=$(echo $?)
+
+if [ $test -eq 1 ]
+then
+  echo "No connection to Tor Network"
+elif [ $test -eq 0 ]
+then
+  echo "Connection to Tor Network : Done"
+fi
+
+exit 0
