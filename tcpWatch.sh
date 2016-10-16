@@ -8,7 +8,7 @@ port=$2
 echo "${port}"
 file="/tmp/connections.txt"
 file2="/tmp/test.txt"
-
+mailAddress=""
 if [ -z "$1" ]
 then
   echo "Usage : ${script} -p <port> or --port <port>"
@@ -29,7 +29,8 @@ case "$1" in
       echo "after : $after"
       if [[ "$after" -gt "$before" ]]
         then
-        "body of your email" | mail -s "This is a Subject" -a "From: you@example.com" recipient@elsewhere.com
+        "body of your email" | mail -s "This is a Subject" -a "From: you@example.com" ${mailAdress}
+        wall New Connection
 fi
 
 done
