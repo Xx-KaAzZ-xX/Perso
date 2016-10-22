@@ -5,9 +5,7 @@
 
 script="$(basename "$(test -L "$0" && readlink "$0" || echo "$0")")"
 port=$2
-echo "${port}"
 file="/tmp/connections.txt"
-file2="/tmp/test.txt"
 mailAddress=""
 if [ -z "$1" ]
 then
@@ -25,8 +23,8 @@ case "$1" in
       sleep 30
       after=$(lsof -i :${port} | grep ESTABLISHED | wc -l)
 
-      echo "before : $before"
-      echo "after : $after"
+      #echo "before : $before"
+      #echo "after : $after"
       if [[ "$after" -gt "$before" ]]
         then
         "body of your email" | mail -s "This is a Subject" -a "From: you@example.com" ${mailAdress}
