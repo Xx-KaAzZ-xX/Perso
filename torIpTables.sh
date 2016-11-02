@@ -9,6 +9,11 @@ _trans_port="9040"
 _dns_port="53"
 _non_tor="127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
 
+if [ -z "${_tor_uid}" ]
+then
+  _tor_uid=$(ps -aux | grep /usr/bin/tor | sed -n 1p | awk '{printf $2}')
+fi
+
 iptables -F
 iptables -t nat -F
 ### set iptables *nat
@@ -36,15 +41,14 @@ iptables -A OUTPUT -m owner --uid-owner $_tor_uid -j ACCEPT
 iptables -A OUTPUT -j REJECT
 
 ##Test
-nslookup google.fr > /dev/null 2>&1
+nslookup google.fr > /dev/null  2>&1
 test=$(echo $?)
 
-if [ $test -eq 1 ]
+if [ $test -eq 0 ]
 then
-  echo "No connection to Tor Network"
-elif [ $test -eq 0 ]
-then
-  echo "Connection to Tor Network : Done"
+  echo "Connection to Tor Network: Done"
+else
+  echo "No Connection to Tor Network"
 fi
 
 exit 0
