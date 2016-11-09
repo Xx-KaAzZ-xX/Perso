@@ -1,27 +1,24 @@
-#include <iostream> include <fstream>
-using namespace std;
-void DownloadAndSave(std::string url, std::string filename)
+#include <stdio.h>
+#include <curl/curl.h>
+
+int main(void)
 {
-    HTTPDownloader downloader;
-	std::string content = downloader.download(url);
-	ofstream myfile;
-	myfile.open (filename.c_str());
-	myfile.write(content.data(), content.size());
-	myfile.close();
-}
-int main() {
-    /*Le but sera d'enregistrer le ps1 sur le disque , d'exécuter un 
-powershell en admin et de changer le Set-Execution Policy pour que le 
-ps1 s'exécute*/
-    /*ifstream my_script("script.ps1",ios::in);
-    if(my_script)
-    {
-        string line;
-        while(getline(my_script, line))
-        {
-            cout << line << endl;
-        }
-    }*/
-    DownloadAndSave("http://myurl/test.ps1","script.ps1")
-    return 0;
+  CURL *curl;
+  CURLcode res;
+
+  curl = curl_easy_init();
+  if(curl) {
+    curl_easy_setopt(curl, CURLOPT_URL, "http://example.com");
+
+    /* Perform the request, res will get the return code */ 
+    res = curl_easy_perform(curl);
+    /* Check for errors */ 
+    if(res != CURLE_OK)
+      fprintf(stderr, "curl_easy_perform() failed: %s\n",
+              curl_easy_strerror(res));
+
+    /* always cleanup */ 
+    curl_easy_cleanup(curl);
+  }
+  return 0;
 }
