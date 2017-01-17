@@ -1,6 +1,5 @@
 #!/bin/bash
 
-
 ##Description : . Torify all the output trafic for a user
 
 if [ -z "${1}" ]
@@ -11,7 +10,8 @@ then
 echo 'nameserver 127.0.0.1' > /etc/resolv.conf
 
 ### set variables
-_tor_uid=$(/etc/init.d/tor status | grep Main | awk '{print $3}')
+#_tor_uid=$(/etc/init.d/tor status | grep Main | awk '{print $3}')
+_tor_uid=$(ps -aux | grep /usr/bin/tor | sed -n 1p | awk '{printf $2}')
 _out_if="eth0"
 _trans_port="9040"
 _dns_port="5353"
@@ -21,10 +21,6 @@ ssh_port="6622"
 _virt_addr="10.192.0.0/10"
 username="${1}"
 
-if [ -z "${_tor_uid}" ]
-then
-  _tor_uid=$(ps -aux | grep /usr/bin/tor | sed -n 1p | awk '{printf $2}')
-fi
 
 iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner ${username} -m tcp --syn -j REDIRECT --to-ports 9040
 iptables -t nat -A OUTPUT -p udp -m owner --uid-owner ${username} -m udp --dport 53 -j REDIRECT --to-ports 5353
