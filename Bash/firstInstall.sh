@@ -61,7 +61,8 @@ smtp_use_tls = yes
 smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt
 _EOF_
 
-if [[ ! -f /etc/postfix/sasl_passwd ]] then;
+if [[ ! -f /etc/postfix/sasl_passwd ]] 
+then
   echo "[smtp.gmail.com]:587 al3rte5@gmail.com:password" > /etc/postfix/sasl_passwd
 fi
 
@@ -77,9 +78,11 @@ echo "
 alias al=\"ls \$LS_OPTIONS -alh\" 
 alias showconnections=\"netstat -ntu | awk '{print \$5}' | cut -d: -f1 | grep -E [0-9.]+ | sort | uniq -c | sort -n\" 
 force_color_prompt=\"yes\"
-PS1='${debian_chroot:+($debian_chroot)}\[\033[01;95m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
-" >> /root/.bashrc
-echo "echo \'Accès Shell Root le \' \`date\` \`who\` | mail -s \`hostname\` Shell Root de \`who | cut -d\"(\" -f2 | cut -d\")\" -f1\` al3rte5@gmail.com" >> /root/.bashrc
+PS1='${debian_chroot:+($debian_chroot)}\[\033[01;95m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '" >> /root/.bashrc
+echo "
+date=$(date)
+who=$(who | tail -n1 | awk \'{print $5}\')
+echo "Accès Shell root le ${date}" | mail -s "From ${who}" al3rte5@gmail.com" >> /root/.bashrc
 
 echo "Think to do 
 -source /root/.bashrc
