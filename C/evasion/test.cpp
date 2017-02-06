@@ -6,7 +6,7 @@ int main(void)
     CURL *curl;
     FILE *fp;
     CURLcode res;
-    char *url = "http://KaAzZ:Filsdepute-01@wiki.adubus.com/test.ps1";
+    char *url = "url à fournir";
     char outfilename[FILENAME_MAX] = "script.ps1";
     curl = curl_easy_init();                                                                                                                                                                                                                                                           
     if (curl)
