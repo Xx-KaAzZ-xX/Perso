@@ -5,15 +5,18 @@ nbBounced=$(cat /var/log/mail.log | grep status=bounced | wc -l)
 file="/tmp/messages_id.txt"
 senders="/tmp/senders.txt"
 log_file="/tmp/bounces.log"
+tmp1="/tmp/tmp1.txt"
+tmp2="/tmp/tmp2.txt"
 final_file="/root/bounces.log"
-date=$(date | awk '{NF=4; print}') #On récup la date en format syslog
-hostname=$(cat /etc/hostname)
 
 ##Effacer les fichiers laissés par l'exécution précédente
 [ -e ${file} ] && rm ${file}
 [ -e ${senders} ] && rm ${senders}
 [ -e ${log_file} ] && rm ${log_file}
+[ -e ${tmp1} ] && rm ${tmp1}
+[ -e ${tmp2} ] && rm ${tmp2}
 [ -e ${final_file} ] && rm ${final_file}
+
 
 echo -e "${messages_id}\n" > ${file}
 sed  '/^$/d' ${file} > /tmp/tmp.txt && mv /tmp/tmp.txt ${file}
@@ -33,21 +36,15 @@ do
 
   occurences=$(grep -c "${line}" ${senders})
   stats=$(echo "scale=2; ${occurences}/${nbBounced} * 100" | bc)
-  echo -e "${line} \t ${occurences} \t \t ${stats}%" >> ${log_file}
+  echo -e "${line} ${occurences} ${stats}%" >> ${log_file}
 done
 
-:<<'COM'
-echo "Rapport de bounce du ${date_debut} au ${date_fin}" > ${final_file}
-echo -e "--------------------------------------------------------------|
-        Adresses \t Nombre de Bounces \t Pourcentage  |" >> ${final_file}
-echo -e "--------------------------------------------------------------|" >> ${final_file}
-COM
-nbBouncePerDomain=$(cat ${log_file} | sort -u > /tmp/nawak.txt)
-cat /tmp/nawak.txt | while read line
-do
+nbBouncePerDomain=$(cat ${log_file} | sort -u > ${tmp1})
 
 #Formatage du fichier comme syslog
-echo -e "${date} \t ${hostname} postfix/local [] ${line}" >> ${final_file}
-done
+cat ${tmp1} | logger -t BOUNCES -i -s 2>&1 | tee -a ${tmp2}
+id=$(cat ${tmp2} | cut -d "[" -f2 | cut -d "]" -f1 | head -n 1)
+id="BOUNCES\[${id}\]"
+grep -w "${id}" /var/log/syslog > ${final_file}
 
 exit 0
