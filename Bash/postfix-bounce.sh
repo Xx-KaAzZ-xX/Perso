@@ -17,10 +17,15 @@ final_file="/root/bounces.log"
 [ -e ${tmp2} ] && rm ${tmp2}
 [ -e ${final_file} ] && rm ${final_file}
 
+##Error handling , on arrête le script si $messages_id est vide
+if [ -z "${messages_id}" ]
+then
+  exit 1
+fi
 
 echo -e "${messages_id}\n" > ${file}
-sed  '/^$/d' ${file} > /tmp/tmp.txt && mv /tmp/tmp.txt ${file}
 
+sed  '/^$/d' ${file} > /tmp/tmp.txt && mv /tmp/tmp.txt ${file}
 ##On récupère les NDD qui bounce
 cat ${file} | while read line
 do
@@ -36,15 +41,15 @@ do
 
   occurences=$(grep -c "${line}" ${senders})
   stats=$(echo "scale=2; ${occurences}/${nbBounced} * 100" | bc)
-  echo -e "${line} ${occurences} ${stats}%" >> ${log_file}
+  echo -e "${line}: ${occurences} bounces - ${stats}%" >> ${log_file}
 done
 
 nbBouncePerDomain=$(cat ${log_file} | sort -u > ${tmp1})
 
 #Formatage du fichier comme syslog
-cat ${tmp1} | logger -t BOUNCES -i -s 2>&1 | tee -a ${tmp2}
+cat ${tmp1} | logger -t BOUNCESTEST -i -s 2>&1 | tee -a ${tmp2}
 id=$(cat ${tmp2} | cut -d "[" -f2 | cut -d "]" -f1 | head -n 1)
-id="BOUNCES\[${id}\]"
+id="BOUNCESTEST\[${id}\]"
 grep -w "${id}" /var/log/syslog > ${final_file}
 
 exit 0
