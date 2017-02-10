@@ -27,8 +27,8 @@ case "$1" in
       #echo "after : $after"
       if [[ "$after" -gt "$before" ]]
         then
-        "body of your email" | mail -s "This is a Subject" -a "From: you@example.com" ${mailAdress}
-        wall New Connection
+          echo "Connexion sur le port ${port} le" `date` | mail -s "TCP Connection"  al3rte5@gmail.com
+          wall New Connection
 fi
 
 done
