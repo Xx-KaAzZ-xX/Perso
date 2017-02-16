@@ -34,21 +34,45 @@ def check_package():
             if cache[line].is_installed: 
                 print (line+" :[OK]")
             else:
-                print (line+" is not installed. Do you want the script to install it for you ? [Y/n]")
-                choice = raw_input().lower()
-                if choice in yes:
-                    os.system('apt-get install -y '+line)
+                os.system('which'+line)
+                test_dpkg = os.system('echo $?')
+                if test_dpkg == "1":
+                    print (line+" is not installed. Do you want the script to install it for you ? [Y/n]")
+                    choice = raw_input().lower()
+                    if choice in yes:
+                        os.system('apt-get install -y '+line)
+                    else:
+                        print ("The script won't work without the "+line+"package")
                 else:
-                    print ("The script won't work without the "+line+"package")
+                    print (line+" :[OK]")
 def scan_target():
     target = sys.argv[2]
-    target_ip = socket.gethostbyname(target)
-    path = "/root"
+    ##Error handling for NX domains##
+    try:
+        target_ip = socket.gethostbyname(target)
+    except socket.gaierror:
+        print ("The target does not exist")
+        sys.exit()
+        
+    path = os.getenv("HOME")
     os.chdir(path)
-    os.mkdir(target)
-    os.system('echo "it works"')
+    try:
+        os.mkdir(target)
+    except OSError:
+        print ("The directory"+target+"exists. Try again")
+        sys.exit()
+    
     #Target results in a specific directory
 
+    scan_directory = (path+'/'+target+'/')
+    print (scan_directory)
+    
+    nmap_scan = os.system('proxychains nmap -A -T4 -sV '+target_ip+' -oA '+scan_directory+'nmap_scan')
+    #result = subprocess.check_output(nmap_scan, shell=True)
+
+def exploits_search():
+    #Must grep nmap output and search for possible exploits through the web
+    
 def main_prog():
     for arg in sys.argv:
         if arg == "-h":
