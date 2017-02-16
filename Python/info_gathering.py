@@ -43,7 +43,11 @@ def check_package():
 def scan_target():
     target = sys.argv[2]
     target_ip = socket.gethostbyname(target)
-
+    path = "/root"
+    os.chdir(path)
+    os.mkdir(target)
+    os.system('echo "it works"')
+    #Target results in a specific directory
 
 def main_prog():
     for arg in sys.argv:
