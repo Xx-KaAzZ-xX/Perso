@@ -3,12 +3,18 @@
 
 #. Description:     Tool to automatize information gathering step
 
-import os, sys, os.path, apt, socket
+#. Pense-bête : Il faudra rajouter une option d'update pour la recherche d'exploit
+
+import os, sys, os.path, apt, socket, re
 
 ##Définitions des variables
 scriptname = sys.argv[0]
 cache = apt.Cache()
 prerequisites = "/tmp/prerequisites.txt"
+services = ["ssh", "http", "https", "ftp", "smtp", "pop3", "imap"]
+ports = ["21/", "22/", "23/", "25/", "80/", "465/", "587/", "3306/", "8080/"] #On rajoute le '/' à la fin à cause du formatage de l'output de Nmap
+soft_versions = "/tmp/soft_versions.txt"
+tmp1 = "/tmp/tmp1"
 yes = set(['yes','y', 'ye', ''])
 no = set(['no','n'])
 
@@ -16,7 +22,7 @@ no = set(['no','n'])
 ##Usage function
 def usage ():
     print ("This is the list of available options:")
-    print ("\t -h : Set the host or domain name")
+    print ("\t -t : Set the target domain name")
     print ("\t -p : Set a person name \n")
     print ("\t Example : python "+scriptname+" -h example.com")
 
@@ -30,7 +36,7 @@ def check_package():
     ##On check si chacun d'eux est installé
     with open(prerequisites, 'r') as f:
         for line in f:
-            line = line.rstrip('\n')
+            line = line.rstrip('\n') ##Faire en sorte d'enlever les \n en trop
             if cache[line].is_installed: 
                 print (line+" :[OK]")
             else:
@@ -59,24 +65,46 @@ def scan_target():
     try:
         os.mkdir(target)
     except OSError:
-        print ("The directory"+target+"exists. Try again")
+        print ("The directory"+target+" exists. Try again")
         sys.exit()
     
     #Target results in a specific directory
 
     scan_directory = (path+'/'+target+'/')
-    print (scan_directory)
-    
-    nmap_scan = os.system('proxychains nmap -A -T4 -sV '+target_ip+' -oA '+scan_directory+'nmap_scan')
+    print ("Do you want to proxychains the target scan ? [Y/n]")
+    choice = raw_input().lower()
+    if choice in yes:
+        nmap_scan = os.system('proxychains nmap -A -T4 -sV '+target_ip+' -oA '+scan_directory+'nmap_scan')
+    else:
+        nmap_scan = os.system('nmap -A -T4 -sV '+target_ip+' -oA '+scan_directory+'nmap_scan')
     #result = subprocess.check_output(nmap_scan, shell=True)
 
 def exploits_search():
-    #Must grep nmap output and search for possible exploits through the web
-    
+    #Must grep nmap output and search for possible exploits through the web ##Exploit search https://github.com/rfunix/Pompem
+    foobar = open(soft_versions,"wb")
+    for i in range(len(ports)):
+        #print services[i]
+        for line in open("/root/serv_pulido.nmap", 'r'):
+            if ports[i] in line:
+                print (line)
+
+    foobar.close()
+
+    os.system('cat '+soft_versions+' | awk \'{print $4 " " $5}\' > '+tmp1)
+    ''' 
+    with open(tmp1, 'r') as foo:
+        for line in foo:
+            if line =="":
+                print ("the variable must be empty")
+            else:
+                print ("the variable is not empty")
+    '''
+
 def main_prog():
     for arg in sys.argv:
-        if arg == "-h":
-            scan_target()
+        if arg == "-t":
+            #scan_target()
+            exploits_search()
         if len(sys.argv) == 1:
             usage()
 
