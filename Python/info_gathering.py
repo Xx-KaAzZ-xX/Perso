@@ -15,6 +15,7 @@ services = ["ssh", "http", "https", "ftp", "smtp", "pop3", "imap"]
 ports = ["21/", "22/", "23/", "25/", "80/", "465/", "587/", "3306/", "8080/"] #On rajoute le '/' à la fin à cause du formatage de l'output de Nmap
 soft_versions = "/tmp/soft_versions.txt"
 tmp1 = "/tmp/tmp1"
+tmp2 = "/tmp/tmp2"
 yes = set(['yes','y', 'ye', ''])
 no = set(['no','n'])
 
@@ -24,7 +25,7 @@ def usage ():
     print ("This is the list of available options:")
     print ("\t -t : Set the target domain name")
     print ("\t -p : Set a person name \n")
-    print ("\t Example : python "+scriptname+" -h example.com")
+    print ("\t Example : python "+scriptname+" -t example.com")
 
 ##Check if necessary packages are installed
 def check_package():
@@ -60,7 +61,7 @@ def scan_target():
         print ("The target does not exist")
         sys.exit()
         
-    path = os.getenv("HOME")
+    #path = os.getenv("HOME")
     os.chdir(path)
     try:
         os.mkdir(target)
@@ -77,40 +78,44 @@ def scan_target():
         nmap_scan = os.system('proxychains nmap -A -T4 -sV '+target_ip+' -oA '+scan_directory+'nmap_scan')
     else:
         nmap_scan = os.system('nmap -A -T4 -sV '+target_ip+' -oA '+scan_directory+'nmap_scan')
-    #result = subprocess.check_output(nmap_scan, shell=True)
 
 def exploits_search():
+
+    target = sys.argv[2]
+    path = os.getenv("HOME")
+    scan_directory = (path+'/'+target+'/')
     #Must grep nmap output and search for possible exploits through the web ##Exploit search https://github.com/rfunix/Pompem
-    foobar = open(soft_versions,"wb")
+    foobar = open(soft_versions, 'wb')
     for i in range(len(ports)):
         #print services[i]
-        for line in open("/root/serv_pulido.nmap", 'r'):
+        for line in open(scan_directory+"nmap_scan.nmap", 'r'):
             if ports[i] in line:
-                print (line)
-
+                foobar.write(line)
     foobar.close()
 
-    os.system('cat '+soft_versions+' | awk \'{print $4 " " $5}\' > '+tmp1)
-    ''' 
+    os.system('cat '+soft_versions+' | awk \'{print $4 " " $5 " "$6}\' > '+tmp1)
     with open(tmp1, 'r') as foo:
         for line in foo:
-            if line =="":
+            if line=="":
                 print ("the variable must be empty")
             else:
-                print ("the variable is not empty")
-    '''
+                ##Lancer la recherche des exploits
+                print (line)
+    
 
 def main_prog():
     for arg in sys.argv:
         if arg == "-t":
-            #scan_target()
+            print ("===== Prerequisites =====\n")
+            check_package()
+            print ("==========================\n")
+            scan_target()
             exploits_search()
+        if arg == "-h":
+            usage()
         if len(sys.argv) == 1:
             usage()
 
-print ("===== Prerequisites =====\n")
-check_package()
-print ("==========================\n")
 main_prog()
 
 
