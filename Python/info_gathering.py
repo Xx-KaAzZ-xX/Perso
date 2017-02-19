@@ -3,9 +3,11 @@
 
 #. Description:     Tool to automatize information gathering step
 
-#. Pense-bête : Il faudra rajouter une option d'update pour la recherche d'exploit
+#. Pense-bête : Il faudra rajouter une option d'update pour la recherche d'exploit, catcher la sortie du script en Ctrl+c
+#. Où en étais-je : => la recherche d'exploits à partir du web avec le module requets
 
-import os, sys, os.path, apt, socket, re
+import os, sys, os.path, apt, socket, re, requests
+
 
 ##Définitions des variables
 scriptname = sys.argv[0]
@@ -61,7 +63,7 @@ def scan_target():
         print ("The target does not exist")
         sys.exit()
         
-    #path = os.getenv("HOME")
+    path = os.getenv("HOME")
     os.chdir(path)
     try:
         os.mkdir(target)
@@ -95,11 +97,12 @@ def exploits_search():
 
     os.system('cat '+soft_versions+' | awk \'{print $4 " " $5 " "$6}\' > '+tmp1)
     with open(tmp1, 'r') as foo:
+        ## On verra plus tard s'il faut rajouter de l'error handling lorsque $line est vide
         for line in foo:
             if line=="":
                 print ("the variable must be empty")
             else:
-                ##Lancer la recherche des exploits
+                ##Lancer la recherche des exploits voir : RequestWorker, RequestWorkerHttpLib
                 print (line)
     
 
