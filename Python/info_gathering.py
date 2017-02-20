@@ -3,7 +3,7 @@
 
 #. Description:     Tool to automatize information gathering step
 
-#. Pense-bête : Il faudra rajouter une option d'update pour la recherche d'exploit, catcher la sortie du script en Ctrl+c
+#. Pense-bête : Il faudra rajouter une option d'update pour la recherche d'exploit, catcher la sortie du script en Ctrl+c  + ajouter scan pour serveur web genre nikto
 #. Où en étais-je : => la recherche d'exploits à partir du web avec le module requets
 
 import os, sys, os.path, apt, socket, re, requests
@@ -15,6 +15,7 @@ cache = apt.Cache()
 prerequisites = "/tmp/prerequisites.txt"
 services = ["ssh", "http", "https", "ftp", "smtp", "pop3", "imap"]
 ports = ["21/", "22/", "23/", "25/", "80/", "465/", "587/", "3306/", "8080/"] #On rajoute le '/' à la fin à cause du formatage de l'output de Nmap
+#sites = ["PacketStorm security", "CXSecurity", "ZeroDay", "Vulners", "National Vulnerability", "Database"]
 soft_versions = "/tmp/soft_versions.txt"
 tmp1 = "/tmp/tmp1"
 tmp2 = "/tmp/tmp2"
@@ -103,7 +104,9 @@ def exploits_search():
                 print ("the variable must be empty")
             else:
                 ##Lancer la recherche des exploits voir : RequestWorker, RequestWorkerHttpLib
-                print (line)
+                page = requests.get("https://www.exploit-db.com/")
+                content = page.content
+                print (content)
     
 
 def main_prog():
