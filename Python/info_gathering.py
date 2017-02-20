@@ -104,11 +104,8 @@ def exploits_search():
                 print ("the variable must be empty")
             else:
                 ##Lancer la recherche des exploits voir : RequestWorker, RequestWorkerHttpLib
-                page = requests.get("https://www.exploit-db.com/")
-                content = page.content
-                print (content)
-    
-
+                os.system('python /root/Git/Python/scraper.py -s openssh') 
+                        
 def main_prog():
     for arg in sys.argv:
         if arg == "-t":
