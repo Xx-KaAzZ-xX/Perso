@@ -1,7 +1,8 @@
 #!/usr/bin/python
 
+## Il me reste à rediregirer l'output vers la sortie standard
 
-import re, requests, sys
+import re, requests, sys, os, subprocess
 
 for arg in sys.argv:
         if arg == "-s":
@@ -33,3 +34,10 @@ for arg in sys.argv:
                         
             sys.stdout.close
             cve4.close
+            sort = "cat cve_packet.txt | sort -u"
+            links = subprocess.check_output([sort], stdout=subprocess.PIPE)
+            out = links.stdout.red()
+            print out
+            #os.system('cat cve_packet.txt | sort -u')
+            #os.system('rm cve_packet.txt')
+            
