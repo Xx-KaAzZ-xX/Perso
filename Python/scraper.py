@@ -26,7 +26,7 @@ for arg in sys.argv:
 
     ##NVD DATABASE PART##
         
-        print (bcolors.OKGREEN+"\t \t \t ====== NVD DATABASE ======")
+        print (bcolors.OKGREEN+"\t \tNVD DATABASE\t \t \n")
         cve1 = "cve1.html"
         cve2 = open(cve1, 'wb')
         base_url1 = "https://web.nvd.nist.gov/view/vuln/"
@@ -43,10 +43,9 @@ for arg in sys.argv:
                     for i in range(len(url1)):
                         print (base_url1+url1[i])
         cve2.close
-        print (bcolors.OKGREEN+"========================================")       
         ##PacketStorm Security DATABASE PART##
         
-        print (bcolors.OKBLUE+"\t \t \t ====== PacketStormSecurity DATABASE ======")
+        print (bcolors.OKBLUE+"\n \t \tPacketStormSecurity DATABASE \t \t \n")
 	cve3 = "cve2.html"
         cve4 = open(cve3, 'wb')
         base_url2 = "https://packetstormsecurity.com"
@@ -78,7 +77,10 @@ for arg in sys.argv:
             for line in f:
                 print (line)
         #os.system('rm cve_packet.txt')                
-        print (bcolors.OKBLUE+"========================================")       
+
+        ##Exploit-DB Part##
+
+        os.system('/root/Pentest/exploit-db/searchsploit '+search_term)
 
 if len(sys.argv) == 1:
         usage()

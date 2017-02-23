@@ -104,7 +104,7 @@ def exploits_search():
                 print ("the variable must be empty")
             else:
                 ##Lancer la recherche des exploits voir : RequestWorker, RequestWorkerHttpLib
-                os.system('python /root/Git/Python/scraper.py -s openssh') 
+                os.system('python /root/Git/Python/scraper.py -s '+line) 
                         
 def main_prog():
     for arg in sys.argv:
@@ -112,7 +112,7 @@ def main_prog():
             print ("===== Prerequisites =====\n")
             check_package()
             print ("==========================\n")
-            scan_target()
+            #scan_target()
             exploits_search()
         if arg == "-h":
             usage()
