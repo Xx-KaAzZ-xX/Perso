@@ -3,7 +3,7 @@
 #. Description: Outil qui fait de la recherche dans plusieurs BDD CVE en fonction du -s search_term
 
 #. Pense-bête: 
-#. Où en étais-je: Améliorer l'output pour les CVE
+#. Où en étais-je: Améliorer l'output pour les CVE, rajouter l'API de Shodan pour la recherche d'exploit cf le script exploit_db_search.py
 
 import os, sys, requests, re, subprocess
 
@@ -76,11 +76,11 @@ for arg in sys.argv:
         with open("cve_packet2.txt", "r") as f:
             for line in f:
                 print (line)
-        #os.system('rm cve_packet.txt')                
-
+        os.system('rm cve_packet.txt cve1.html cve2.html cve3.html cve_packet2.txt')                
+        
         ##Exploit-DB Part##
-
-        os.system('/root/Pentest/exploit-db/searchsploit '+search_term)
+        ## voir une solution pour mieux l'utiliser
+        #os.system('/root/Pentest/exploit-db/searchsploit '+search_term)
 
 if len(sys.argv) == 1:
         usage()
