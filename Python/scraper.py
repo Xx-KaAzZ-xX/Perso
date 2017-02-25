@@ -3,17 +3,20 @@
 #. Description: Outil qui fait de la recherche dans plusieurs BDD CVE en fonction du -s search_term
 
 #. Pense-bête: 
-#. Où en étais-je: Améliorer l'output pour les CVE, rajouter l'API de Shodan pour la recherche d'exploit cf le script exploit_db_search.py
+#. Où en étais-je: Améliorer l'output pour les CVE, intégrer la recherche pour ExploitDB de search_exploitdb.py
 
 import os, sys, requests, re, subprocess
 
 ##Une fois que ça marche avec un site , il faut mettre la liste d'url avec params à modifier dans cette boucle
 ## WARNING : Les sites ne vont pas tous retournés les datas sous le même genre !
 
+SHODAN_API_KEY = '5tWpm2b9RZBuekbBlIIfYgVekVJ4j6lG'
+
 class bcolors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
     OKGREEN = '\033[92m'
+    OKRED = '\033[31m'
 
 def usage ():
         print ("This is the list of available options:")
@@ -63,9 +66,6 @@ for arg in sys.argv:
 
                     for i in range(len(url2)):
                         print (base_url2+url2[i])
-                        #cve_packet.write(test)
-                        #cve_packet.close
-                        #test2 = re.findall('/files/cve/CVE-(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', line)
 
 
         sys.stdout.close
@@ -75,13 +75,31 @@ for arg in sys.argv:
         os.system('cat cve_packet.txt | sort -u > cve_packet2.txt')
         with open("cve_packet2.txt", "r") as f:
             for line in f:
+                line = line.rstrip('\n')
                 print (line)
-        os.system('rm cve_packet.txt cve1.html cve2.html cve3.html cve_packet2.txt')                
         
         ##Exploit-DB Part##
-        ## voir une solution pour mieux l'utiliser
-        #os.system('/root/Pentest/exploit-db/searchsploit '+search_term)
 
+	exploitdb = "exploitdb.html"
+        html = open(exploitdb, 'wb')
+        page = requests.get("https://exploits.shodan.io/api/search?query="+search_term+"&key="+SHODAN_API_KEY)
+        content = page.content
+        html.write(content)
+        html.close
+        #command = "sed 's/\({\"code\)/\n\1/g'"
+        os.system("sed 's/\({\"code\"\)/\\n\\1/g' exploitdb.html > exploitdb2.html")
+        #regex = "grep -oP 'CVE-[^\"]*(?=\"])'"
+        with open("exploitdb2.html", 'r') as f:
+            for line in f:
+                exploitdb = re.search('ExploitDB', line)
+                #if exploitdb:
+                    #cve = re.findall('"cve": (?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', line)
+        print (bcolors.OKRED+"\n \t \tExploitDB \t \t \n")
+        os.system('awk -F \"\\"*,\\"*\" \'{print $2\"\t\"$8}\' exploitdb2.html')
+
+        ##Un peu de ménage
+        os.system('rm cve* exploitdb*')
+        
 if len(sys.argv) == 1:
         usage()
 
