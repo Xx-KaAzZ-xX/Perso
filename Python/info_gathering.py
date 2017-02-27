@@ -21,7 +21,7 @@ tmp1 = "/tmp/tmp1"
 tmp2 = "/tmp/tmp2"
 yes = set(['yes','y', 'ye', ''])
 no = set(['no','n'])
-
+current_dir = os.getenv("PWD")
 
 ##Usage function
 def usage ():
@@ -64,7 +64,7 @@ def scan_target():
         print ("The target does not exist")
         sys.exit()
         
-    path = os.getenv("HOME")
+    path = os.getenv("PWD")
     os.chdir(path)
     try:
         os.mkdir(target)
@@ -85,9 +85,8 @@ def scan_target():
 def exploits_search():
 
     target = sys.argv[2]
-    path = os.getenv("HOME")
+    path = os.getenv("PWD")
     scan_directory = (path+'/'+target+'/')
-    #Must grep nmap output and search for possible exploits through the web ##Exploit search https://github.com/rfunix/Pompem
     foobar = open(soft_versions, 'wb')
     for i in range(len(ports)):
         #print services[i]
@@ -112,7 +111,7 @@ def main_prog():
             print ("===== Prerequisites =====\n")
             check_package()
             print ("==========================\n")
-            #scan_target()
+            scan_target()
             exploits_search()
         if arg == "-h":
             usage()
