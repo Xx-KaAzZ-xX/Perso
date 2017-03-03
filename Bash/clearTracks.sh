@@ -46,21 +46,14 @@ done
 read -p "Do you want to clear HTTP logs [Yes/no] ?" -n 1 -r
 echo ""
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-<<<<<<< HEAD
   clear_http
-=======
-  echo "hello"
-  #clear_http
->>>>>>> 60628e4ae8ce7488495cfd5bcff6d2788c1165d7
+  clear_http
 else
   echo "HTTP logs won't be cleaned"
 fi
 
 read -p "Do you want to clear FTP logs [Yes/no] ?" -n 1 -r
-<<<<<<< HEAD
 echo ""
-=======
->>>>>>> 60628e4ae8ce7488495cfd5bcff6d2788c1165d7
 if [[ $REPLY =~ ^[Yy]$ ]]; then
   clear_ftp
 else
