@@ -69,7 +69,7 @@ fi
 read -p "Do you want to clear FTP logs [Yes/no] ?" -n 1 -r
 echo ""
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-  clear_ftp
+  clear_ftp_brutal
 else
   echo "FTP logs won't be cleaned"
 fi
@@ -124,11 +124,16 @@ esac
 
 }
 
-:<<COM
-clear_ftp() {
+clear_ftp_brutal() {
 
+  vsftpd_log="/var/log/vsftpd.log"
+  pureftpd_log="/var/log/pure-ftpd.log"
+  if [ -f ${vsftpd_log} ]; then
+    rm $vsftpd_log
+  elif [ -d ${pureftpd_log} ]; then
+    rm ${pureftpd_log}
+  fi
 }
-COM
 
 if [ -z ${1} ]
 then
