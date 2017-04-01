@@ -40,10 +40,8 @@ while getopts ":d:h:" opt; do
             
             while true; do
               php_files_after=$(find $dir -type f -name *.php)
-              #sleep 15
               echo "$php_files_after" > $tmp2
               
-              #echo " " >> $dir/wp-settings.php
               
               if [ -f "${tmp4}" ]; then
                 rm $tmp4
@@ -60,7 +58,7 @@ while getopts ":d:h:" opt; do
                 :
               else
                 ##Alert
-                echo "$modified_file modifié(s) !"
+                echo "$modified_file was added, removed or modified !"
               fi
               sleep 15
             done
