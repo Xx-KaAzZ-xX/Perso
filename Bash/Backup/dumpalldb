@@ -1,0 +1,63 @@
+#!/bin/bash
+#
+# Filename : dumpalldb
+# Version  : 1.0
+# Author   : mathieu androz
+# Contrib  :
+# Description :
+#  . Dump all databases
+#  . Each db is stored in its own file and Gzip
+#
+
+
+function usage() {
+  echo "
+Description :
+  - Dump all databases
+  - Each databae is stored in its own file and Gzip
+  - To be executed as user called backupit
+
+Usage : ${0}
+"
+}
+
+# Security
+# Test if the script is executed by backupit !
+[[ $(whoami) != "backupit" ]] && exit 1
+
+# Where dumps are stored
+STORE_FOLDER="/home/backupit/DBs"
+# Databases list
+DBLIST="/home/backupit/db.txt"
+DBUSER="root"
+DBPASS=""
+
+( [[ -z "${DBUSER}" ]] || [[ -z "${DBPASS}" ]] ) && exit 1
+( [[ "${STORE_FOLDER}" == "/" ]] || [[ -z "${STORE_FOLDER}" ]] || [[ "${DBLIST}" == "/" ]] || [[ -z "${DBLIST}" ]] ) && exit 1
+
+
+[[ ! -d "${STORE_FOLDER}" ]] && mkdir -p "${STORE_FOLDER}" && chmod 700 "${STORE_FOLDER}"
+
+# Keep all old backups (one day ago)
+if [[ "${STORE_FOLDER}" == "/home/backupit/DBs" ]] && [[ "${STORE_FOLDER}" != "/" ]]; then
+  cd "${STORE_FOLDER}"
+  for file in $(ls . | grep -E "sql.gz$")
+  do
+    mv ${file} ${file}.old1day
+  done
+fi
+
+# Get databases list
+mysql -u "${DBUSER}" -p""${DBPASS}"" -N -B -e "show databases;" > "${DBLIST}"
+chmod 600 "${DBLIST}"
+
+# Dump each db in a separate file
+while read dbname
+do
+  [[ "${dbname}" == "information_schema" ]] && continue
+  [[ "${dbname}" == "performance_schema" ]] && continue
+  mysqldump -u ${DBUSER} -p""${DBPASS}"" --max_allowed_packet=128M --single-transaction "${dbname}" | gzip > "${STORE_FOLDER}"/"${dbname}".sql.gz
+done < "${DBLIST}"
+
+exit 0
+
