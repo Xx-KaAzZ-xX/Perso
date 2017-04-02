@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #.  Description : Script pour surveiller les signatures des fichiers PHP d'un hébergement web
-#.                Alerte si jamais une des signatures a changé
+#.                Alerte si jamais une des signatures a changé, un fichier a été enlevé ou modifier
 
 
 usage() {
