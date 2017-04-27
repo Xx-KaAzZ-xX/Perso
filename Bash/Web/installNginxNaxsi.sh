@@ -3,20 +3,27 @@
 #.  Description : Install Nginx with the Naxsi WAF from sources for debian 8, supposing that dependencies are already#.                installed
 #.  Author : Aurélien DUBUS
 
+
+##Install dependencies
+apt-get install libpcre3-dev build-essential libssl-dev zlib1g-dev
 ##Download Nginx/Naxsi sources
 
 cd /usr/local/src
 
 wget http://nginx.org/download/nginx-1.6.2.tar.gz
 
-tar -xpzf nginx-1.6.2.tar.gz 2&1>/dev/null
+tar -xvzf nginx-1.6.2.tar.gz > /dev/null 2>&1
 
 wget https://github.com/nbs-system/naxsi/archive/master.zip
-unzip master.zip 2&1>/dev/null
+unzip master.zip > /dev/null 2>&1
 cd nginx-1.6.2/
 
+##Installation
 echo "Compiling... "
-./configure --conf-path=/etc/nginx/nginx.conf --add-module=../naxsi-master/naxsi_src/  --error-log-path=/var/log/nginx/error.log --http-client-body-temp-path=/var/lib/nginx/body  --http-fastcgi-temp-path=/var/lib/nginx/fastcgi --http-log-path=/var/log/nginx/access.log  --http-proxy-temp-path=/var/lib/nginx/proxy --lock-path=/var/lock/nginx.lock  --pid-path=/var/run/nginx.pid --with-http_ssl_module  --without-mail_pop3_module --without-mail_smtp_module  --without-mail_imap_module --without-http_uwsgi_module  --without-http_scgi_module --with-ipv6 --prefix=/etc/nginx --sbin-path=/usr/sbin/nginx 2&1>/dev/null
+./configure --conf-path=/etc/nginx/nginx.conf --add-module=../naxsi-master/naxsi_src/  --error-log-path=/var/log/nginx/error.log --http-client-body-temp-path=/var/lib/nginx/body  --http-fastcgi-temp-path=/var/lib/nginx/fastcgi --http-log-path=/var/log/nginx/access.log  --http-proxy-temp-path=/var/lib/nginx/proxy --lock-path=/var/lock/nginx.lock  --pid-path=/var/run/nginx.pid --with-http_ssl_module  --without-mail_pop3_module --without-mail_smtp_module  --without-mail_imap_module --without-http_uwsgi_module  --without-http_scgi_module --with-ipv6 --prefix=/etc/nginx --sbin-path=/usr/sbin/nginx
+
+make 
+make install
 
 cp /usr/local/src/naxsi-master/naxsi_config/naxsi_core.rules /etc/nginx/ -fv
 
