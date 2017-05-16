@@ -9,12 +9,15 @@
 usage() {
  script_name=$(basename $0)
    echo -e "Usage : ./${script_name} /home/user/www"
-}
+   exit 1
+ }
 
 if [ -z "${1}" ]
 then
   usage
 fi
+
+dpkg -s inotify-tools >/dev/null 2>&1 || apt-get install inotify-tools >/dev/null 2>&1 && echo "Installing requirements ..."
 
 while true; do
 
