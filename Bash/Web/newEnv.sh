@@ -24,9 +24,8 @@ machineName=$(cat /etc/hostname)
 
 ##Variables
 read -p "Entrer le nom de l'utilisateur : " username
-username2="web"
 #Concaténation username + web
-userPool="${username}${username2}"
+#userPool="${username}${username2}"
 infoFile="/root/$username.info"
 [[ -f ${infoFile} ]] && echo "A UNIX user should already exist with this name. Aborted." && echo exit 1
 
@@ -72,9 +71,6 @@ echo "${username}:${unix_passwd}" | chpasswd
 
 mkdir /home/$username/{www,tmp,logs,sessions,.socks,cgi-bin}
 chown -R $username:$username /home/$username/{www,tmp,logs,sessions,.socks,cgi-bin}
-
-##Création du user pour le pool FPM
-useradd -s /bin/false ${userPool}
 
 case $servWeb in
   1*)
@@ -400,7 +396,7 @@ echo -e "Création du pool FPM\n"
 if [ ! -f /etc/php5/fpm/pool.d/${username}.conf ]
 then
   cat >>  /etc/php5/fpm/pool.d/${username}.conf << _EOF_
-[$userPool]
+[${username}]
 
 ; Per pool prefix
 ; It only applies on the following directives:
@@ -570,11 +566,11 @@ fi
 if [ -d /home/${username}/www/sites/default/files ]
 then
   echo "Changement de permission de /default/files"
-  chown -R ${userPool}:${userPool} /home/${username}/www/sites/default/files
+  chown -R ${username}:${username} /home/${username}/www/sites/default/files
 fi
 
 ##Création des ACL
-
+:<<'COM'
 if [ ! -f /root/aclFiles.lst ] || [ ! -f /root/aclLogs.lst ]
 then
   cat >> /root/aclFiles.lst << _EOF_
@@ -602,6 +598,7 @@ setfacl -M /root/aclLogs.lst /home/${username}/{tmp,logs,sessions}
 else
   echo "Les fichiers d'ACL ont déjà été créés"
 fi
+COM
 
 ##SSH-Keygen
 
@@ -616,7 +613,7 @@ echo "----------------------------------------------------
 
       UNIX username     : ${username}
       UNIX password     : ${unix_passwd}
-      USER FPM          : ${userPool}
+      USER FPM          : ${username}
 
       SQL username      : ${username}
       SQL Database      : ${username}
@@ -625,7 +622,7 @@ echo "----------------------------------------------------
 ----------------------------------------------------" | tee ${infoFile}
 echo ""
 echo "[INFO] Vhost will have to be activated"
-echo "[INFO] ACL will have to be set"
+#echo "[INFO] ACL will have to be set"
 
 read -p "Press enter when you have saved all informations"
 
