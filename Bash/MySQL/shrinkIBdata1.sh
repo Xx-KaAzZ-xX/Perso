@@ -12,6 +12,21 @@ DBUSER="root"
 DBPASS="root"
 CustomSQL="/etc/mysql/conf.d/customIT.cnf"
 
+##Some verifications
+
+if [ -z ${DBPASS} ]; then
+  echo "Please set the DBPASS variable"
+fi
+
+[[ $(whoami) != "root" ]] && echo "The script must be run as root" && exit 1
+
+##test mysql_connect
+
+while ! mysql -u root -p$DBPASS  -e ";" ; do
+       echo "Can't connect, please the MySQL root password"
+       read -s -p "MySQL root password:" DBPASS
+done
+
 ##Step one : backup all DBs into a file
 
 mysqldump -h ${DBHOST} -u ${DBUSER} -p""${DBPASS}"" --hex-blob --routines --triggers --all-databases | gzip > ${FILE}.gz
