@@ -22,11 +22,13 @@ _virt_addr="10.192.0.0/10"
 username="${1}"
 
 
+#iptables -A INPUT -p tcp -m tcp --dport 22 -s 192.168.1.0/24 -j ACCEPT
+#iptables -A OUTPUT -p tcp -m tcp --dport 22 -s 192.168.1.0/24 -j ACCEPT
 iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner ${username} -m tcp --syn -j REDIRECT --to-ports 9040
 iptables -t nat -A OUTPUT -p udp -m owner --uid-owner ${username} -m udp --dport 53 -j REDIRECT --to-ports 5353
 iptables -t filter -A OUTPUT -p tcp -m owner --uid-owner ${username} -m tcp --dport 9040 -j ACCEPT
 iptables -t filter -A OUTPUT -p udp -m owner --uid-owner ${username} -m udp --dport 5353 -j ACCEPT
-iptables -t filter -A OUTPUT ! -o lo -m owner --uid-owner ${username} -j DROP
+#iptables -t filter -A OUTPUT ! -o lo -m owner --uid-owner ${username} -j DROP
 ##Test
 su - ${username} -c "nslookup google.fr" > /dev/null  2>&1
 test=$(echo $?)
