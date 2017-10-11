@@ -9,7 +9,7 @@
 
 
 if [[ ! -d "/root/scripts" ]]; then
-  log "Please execute firstinstall.sh script before this one. Aborted..."
+  echo "Please execute firstinstall.sh script before this one. Aborted..."
   exit 1
 fi
 
