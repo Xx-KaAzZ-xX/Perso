@@ -6,6 +6,7 @@ import requests
 import json
 import optparse
 import sys
+import os
 
 def search(bssid):
     s = requests.Session()
@@ -22,6 +23,7 @@ def search(bssid):
         region =  data["results"][0]["region"]
         trilat =  data["results"][0]["trilat"]
         trilong =  data["results"][0]["trilong"]
+    print ("Search for "+bssid+"\n")
     print ("SSID: "+ssid)
     print ("Country: "+country)
     print ("City: "+city)
@@ -30,16 +32,15 @@ def search(bssid):
     print (trilat)
     print ("Longitude")
     print (trilong)
+    os.remove(json_file)
        
 
 def main():
     scriptname = sys.argv[0]
     parser = optparse.OptionParser(scriptname +' -b <BSSID>')
     parser.add_option('-b', dest='bssid', type='string', help='specify a MAC Address')
-    parser.add_option('-e', dest='extract', type='string', help='extract mode for windows laptop machines')
     (options, args) = parser.parse_args()
     bssid = options.bssid
-    extract = options.extract
     if bssid == None:
         print parser.usage
         exit(0)
