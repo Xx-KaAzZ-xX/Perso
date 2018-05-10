@@ -8,6 +8,9 @@
 #  .
 #
 
+
+# Pense-bête : Il reste à ajouter dans la partie Postgres : il faut passer les commandes à la db une fois qu'on est connecté dessus
+
 my_exit()
 {
   echo "Keyboard interrupt detected. Please type 'quit' to exit this program."
@@ -42,7 +45,7 @@ _EOT_
   case "${choice}" in
     1) mysql_menu ;;
     2) postgresql_menu;;
-    3) 
+    3)
       echo ""
       ;;
     q|quit)
@@ -65,7 +68,6 @@ fi
 while ! mysql -u root -p${mysql_password} -e ";" ; do
     read -s -p "Can't connect, please retry: " mysql_password
 done
-#is_connected=$(mysql -u root -p${mysql_password} -e ";") && echo "connected"
 
 }
 
@@ -172,9 +174,9 @@ SQLMENU
       (SELECT 3 pw) A ORDER BY TSize;"
       mysql -u root -p${mysql_password} -e "${Q9}"
       ;;
-    6)Q10="SELECT table_schema AS \"Database\", 
-      ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS \"Size (MB)\" 
-      FROM information_schema.TABLES 
+    6)Q10="SELECT table_schema AS \"Database\",
+      ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS \"Size (MB)\"
+      FROM information_schema.TABLES
       GROUP BY table_schema;"
       mysql -u root -p${mysql_password} -e "${Q10}"
       ;;
@@ -215,6 +217,7 @@ do
   1.  Create database
   2.  Drop database
   3.  Database info
+  4.  Select a database
 
   Enter 'r' or 'return' to return to main menu
 POSTGREMENU
@@ -224,7 +227,7 @@ POSTGREMENU
   case "${choice}" in
     1)read -p "Database name to create: " db_name
       read -p "Specify a user to manage this DB:" db_user
-      read -s -p "Specify a password to this user:" db_user_password 
+      read -s -p "Specify a password to this user:" db_user_password
       runuser -l postgres -c "psql -c \"CREATE USER ${db_user};\""
       runuser -l postgres -c "psql -c \"ALTER ROLE  ${db_user} WITH CREATEDB;\""
       runuser -l postgres -c "psql -c \"ALTER ROLE  ${db_user} WITH SUPERUSER;\""
@@ -234,9 +237,37 @@ POSTGREMENU
     2)read -p "Database name to drop: " db_name
       runuser -l postgres -c "psql -c \"DROP DATABASE ${db_name};\""
       ;;
-    3)#tmpfile="/tmp/pg_db"
-      runuser -l postgres -c "psql -c \"\\\\l\""
-      #cat $tmpfile && rm $tmpfile
+    3)runuser -l postgres -c "psql -c \"\\\\l\""
+      ;;
+    4)runuser -l postgres -c "psql -c \"\\\\l\""
+      echo "Which database do you want to connect to ?"
+      read db_choice
+      runuser -l postgres -c "psql -c \"\connect ${db_choice}\""
+      while true
+      do
+        cat << POSTGREDBMENU
+
+   ########################################
+   #                                      #
+   #You are now connected to ${db_choice} #
+   #                                      #
+   ########################################
+
+   Select an option :
+
+   1.  List tables
+
+   Enter 'r' or 'return' to return to main menu
+POSTGREDBMENU
+      read postgres_choice
+      case "${postgres_choice}" in
+        1)runuser -l postgres -c "psql -c \"\dt\""
+        ;;
+        r|return) postgresql_menu
+        ;;
+        *) echo "Please make a choice";;
+      esac
+      done
       ;;
     r|return) main_menu;;
     *) echo "Please make a choice";;
