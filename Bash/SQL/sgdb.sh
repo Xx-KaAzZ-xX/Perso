@@ -8,6 +8,9 @@
 #  .
 #
 
+
+# Pense-bête : Il reste à ajouter dans la partie Postgres : il faut passer les commandes à la db une fois qu'on est connecté dessus
+
 my_exit()
 {
   echo "Keyboard interrupt detected. Please type 'quit' to exit this program."
@@ -214,6 +217,7 @@ do
   1.  Create database
   2.  Drop database
   3.  Database info
+  4.  Select a database
 
   Enter 'r' or 'return' to return to main menu
 POSTGREMENU
@@ -233,9 +237,37 @@ POSTGREMENU
     2)read -p "Database name to drop: " db_name
       runuser -l postgres -c "psql -c \"DROP DATABASE ${db_name};\""
       ;;
-    3)#tmpfile="/tmp/pg_db"
-      runuser -l postgres -c "psql -c \"\\\\l\""
-      #cat $tmpfile && rm $tmpfile
+    3)runuser -l postgres -c "psql -c \"\\\\l\""
+      ;;
+    4)runuser -l postgres -c "psql -c \"\\\\l\""
+      echo "Which database do you want to connect to ?"
+      read db_choice
+      runuser -l postgres -c "psql -c \"\connect ${db_choice}\""
+      while true
+      do
+        cat << POSTGREDBMENU
+
+   ########################################
+   #                                      #
+   #You are now connected to ${db_choice} #
+   #                                      #
+   ########################################
+
+   Select an option :
+
+   1.  List tables
+
+   Enter 'r' or 'return' to return to main menu
+POSTGREDBMENU
+      read postgres_choice
+      case "${postgres_choice}" in
+        1)runuser -l postgres -c "psql -c \"\dt\""
+        ;;
+        r|return) postgresql_menu
+        ;;
+        *) echo "Please make a choice";;
+      esac
+      done
       ;;
     r|return) main_menu;;
     *) echo "Please make a choice";;
