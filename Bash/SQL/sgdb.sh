@@ -42,7 +42,7 @@ _EOT_
   case "${choice}" in
     1) mysql_menu ;;
     2) postgresql_menu;;
-    3) 
+    3)
       echo ""
       ;;
     q|quit)
@@ -65,7 +65,6 @@ fi
 while ! mysql -u root -p${mysql_password} -e ";" ; do
     read -s -p "Can't connect, please retry: " mysql_password
 done
-#is_connected=$(mysql -u root -p${mysql_password} -e ";") && echo "connected"
 
 }
 
@@ -172,9 +171,9 @@ SQLMENU
       (SELECT 3 pw) A ORDER BY TSize;"
       mysql -u root -p${mysql_password} -e "${Q9}"
       ;;
-    6)Q10="SELECT table_schema AS \"Database\", 
-      ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS \"Size (MB)\" 
-      FROM information_schema.TABLES 
+    6)Q10="SELECT table_schema AS \"Database\",
+      ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS \"Size (MB)\"
+      FROM information_schema.TABLES
       GROUP BY table_schema;"
       mysql -u root -p${mysql_password} -e "${Q10}"
       ;;
@@ -224,7 +223,7 @@ POSTGREMENU
   case "${choice}" in
     1)read -p "Database name to create: " db_name
       read -p "Specify a user to manage this DB:" db_user
-      read -s -p "Specify a password to this user:" db_user_password 
+      read -s -p "Specify a password to this user:" db_user_password
       runuser -l postgres -c "psql -c \"CREATE USER ${db_user};\""
       runuser -l postgres -c "psql -c \"ALTER ROLE  ${db_user} WITH CREATEDB;\""
       runuser -l postgres -c "psql -c \"ALTER ROLE  ${db_user} WITH SUPERUSER;\""
