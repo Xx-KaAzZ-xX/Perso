@@ -9,7 +9,8 @@ import optparse
 import sys
 import string
 from lxml import etree
-
+import xml.etree.ElementTree as ET
+from xml.dom import minidom
 
 def main():
 	scriptname = sys.argv[0]
@@ -29,12 +30,31 @@ def main():
 
 
 def cve_search(file):
-	tree = etree.parse(file)
-	for ports in list(tree):
-		port = ports.find('portid').text
-		print (port)
-
-
+	tree = ET.parse(file)
+	root = tree.getroot()
+	#print (root.tag)
+	xmldoc = minidom.parse(file)
+	hosts = xmldoc.getElementsByTagName("host")
+	for host in hosts:
+		address = host.getElementsByTagName("address")
+		if address:
+			ip = address[0].attributes["addr"]
+			IP = ip.value
+			print("IP:%s"%(IP))
+	ports = xmldoc.getElementsByTagName("port")
+	i = 0
+	for port in ports:
+		service = host.getElementsByTagName("service")
+		if service:
+			product = service[i].attributes["product"]
+			PRODUCT = product.value
+			name = service[i].attributes["name"]
+			NAME = name.value
+			version = service[i].attributes["version"]
+			VERSION = version.value
+			print ("Service name: "+NAME+" Product: "+PRODUCT+" Version: "+VERSION)
+		i += 1
+		
 if __name__ == '__main__':
 	main()
 
