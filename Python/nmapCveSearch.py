@@ -46,13 +46,17 @@ def cve_search(file):
 	for port in ports:
 		service = host.getElementsByTagName("service")
 		if service:
-			product = service[i].attributes["product"]
-			PRODUCT = product.value
-			name = service[i].attributes["name"]
-			NAME = name.value
-			version = service[i].attributes["version"]
-			VERSION = version.value
-			print ("Service name: "+NAME+" Product: "+PRODUCT+" Version: "+VERSION)
+			##Il faut faire un test sur chaque variable si elle est vide ou non et l'afficher ensuite
+			try:
+				product = service[i].attributes["product"]
+				PRODUCT = product.value
+				name = service[i].attributes["name"]
+				NAME = name.value
+				version = service[i].attributes["version"]
+				VERSION = version.value
+				print ("Service name: "+NAME+" Product: "+PRODUCT+" Version: "+VERSION)
+			except:
+				print ("no error")
 		i += 1
 		
 if __name__ == '__main__':
