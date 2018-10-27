@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # coding: utf-8
 
-# Description :	Script to get CVE Exploit from Nmap Scan file
+# Description :	Script to get CVE  from Nmap Scan file
 # Author	: Aurélien DUBUS
 # Version : 1.0
 
@@ -28,6 +28,8 @@ def main():
 	else:
 		print ('specify a Nmap Scan xml file')
 
+def web_search(seek):
+	print (seek)
 
 def cve_search(file):
 	tree = ET.parse(file)
@@ -50,13 +52,19 @@ def cve_search(file):
 			try:
 				product = service[i].attributes["product"]
 				PRODUCT = product.value
-				name = service[i].attributes["name"]
-				NAME = name.value
+				#print PRODUCT
 				version = service[i].attributes["version"]
 				VERSION = version.value
-				print ("Service name: "+NAME+" Product: "+PRODUCT+" Version: "+VERSION)
+				#print VERSION
 			except:
-				print ("no error")
+				VERSION=""
+				PRODUCT=""
+			#On teste ici que ce soit bien un résultat avec un produit et une version avant de lancer la recherche
+			seek = PRODUCT +" "+ VERSION
+			test = isinstance(seek, unicode)
+			if test:
+				web_search(seek)
+			#Faire la recherche web maintenant / ou la remplacer par l'utilisation de l'outil cve-search
 		i += 1
 		
 if __name__ == '__main__':
