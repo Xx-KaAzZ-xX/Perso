@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Filename : sgdb.sh
-# Version  : 1.0
+# Version  : 1.1
 # Author   : Aurélien DUBUS
 # Description :
 #  .    Script to manage some stuff on differents DB server
@@ -216,8 +216,9 @@ do
 
   1.  Create database
   2.  Drop database
-  3.  Database info
-  4.  Select a database
+  3.  List databases
+  4.  Get databases size
+  5.  Select a database
 
   Enter 'r' or 'return' to return to main menu
 POSTGREMENU
@@ -239,7 +240,10 @@ POSTGREMENU
       ;;
     3)runuser -l postgres -c "psql -c \"\\\\l\""
       ;;
-    4)runuser -l postgres -c "psql -c \"\\\\l\""
+    4)runuser -l postgres -c "psql -c \"SELECT t1.datname AS db_name,pg_size_pretty(pg_database_size(t1.datname)) as db_size FROM pg_database t1
+ORDER BY pg_database_size(t1.datname) DESC;\""
+      ;;
+    5)runuser -l postgres -c "psql -c \"\\\\l\""
       echo "Which database do you want to connect to ?"
       read db_choice
       runuser -l postgres -c "psql -c \"\connect ${db_choice}\""
