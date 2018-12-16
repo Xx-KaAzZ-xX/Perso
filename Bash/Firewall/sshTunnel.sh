@@ -11,12 +11,6 @@
    echo -e "\t  -l : The local port."
    echo -e "\t  -r : The remote port."
  }
-
-
- if [ -z ${1} ]
- then
-   usage
- fi
  
  while getopts "h:l:r:" opt; do
    case $opt in
@@ -41,7 +35,8 @@
 
  if [[ ! -z ${test} ]]
  then
- 	echo "SSH tunnel successfully created on port: ${l_port}"
+ 	echo -e "SSH tunnel successfully created on port: ${l_port} \n
+ 			 You can now configure your web browser or proxychains to use it."
  fi
 
  exit 0
