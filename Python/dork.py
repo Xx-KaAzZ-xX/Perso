@@ -18,20 +18,16 @@ def duckDuckGo(dork):
     	s = requests.Session()
     	##replace space by +
     	dork = '+'.join(dork.split())
-    	url = 'https://duckduckgo.com/?q=' + dork + '&ia=web'
-	print (url)
-    	request = s.get(url, headers=headers_Get)
+    	url = 'https://duckduckgo.com/lite?q=' + dork + '&sc=25'
+	#print (url)
+    	request = s.get(url, headers=headers_Get, verify=False)
 	content = request.text
     	soup = BeautifulSoup(request.text, "html.parser")
 	print (content)
 	output = []
-	for searchWrapper in soup.find_all('h3', {'class':'r'}): #this line may change in future based on google's web page structure
-        	url = searchWrapper.find('a')["href"]
-        	text = searchWrapper.find('a').text.strip()
-        	result = {'text': text, 'url': url}
-        	output.append(result)
+	for link in soup.findAll('a', href=True):
+                print link.string
 
-    	return output
 
 def main():
 	scriptname = sys.argv[0]
