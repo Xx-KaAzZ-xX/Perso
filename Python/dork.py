@@ -1,34 +1,47 @@
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
 
 import requests
 import sys
 import optparse
+import re
+import random
 from bs4 import BeautifulSoup
 
-def duckDuckGo(dork):
-	headers_Get = {
-        	'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:49.0) Gecko/20100101 Firefox/49.0',
-        	'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        	'Accept-Language': 'en-US,en;q=0.5',
-        	'Accept-Encoding': 'gzip, deflate',
-        	'DNT': '1',
-        	'Connection': 'keep-alive',
-        	'Upgrade-Insecure-Requests': '1'
+def duckDuckGoSimple(dork):
+	user_agent_file = "user_agent.txt"
+        num_lines = sum(1 for line in open(user_agent_file))
+        #print (num_lines)
+        rand_num = random.randint(1,num_lines)
+        with open(user_agent_file) as f:
+            user_agent = f.read().split('\n')[rand_num]
+        ##problem with the random user_agent, search is broken when changing
+        headers_Get = {
+            #'User-Agent': user_agent,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:49.0) Gecko/20100101 Firefox/50.0',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
     	}
     	s = requests.Session()
     	##replace space by +
     	dork = '+'.join(dork.split())
     	url = 'https://duckduckgo.com/lite?q=' + dork + '&sc=25'
-	#print (url)
-    	request = s.get(url, headers=headers_Get, verify=False)
+    	request = s.get(url, headers=headers_Get)
 	content = request.text
     	soup = BeautifulSoup(request.text, "html.parser")
-	print (content)
-	output = []
-	for link in soup.findAll('a', href=True):
-                print link.string
+	for link in soup.findAll('a', attrs={'href': re.compile("^http|^https://")}):
+                print link.get('href')
 
-
+def duckDuckGoList(dorkList):
+    with open(dorkList) as f:
+        for dork in f:
+            print ()
+            print ("[+] Searcing results for:" + dork)
+            duckDuckGoSimple(dork)
 def main():
 	scriptname = sys.argv[0]
     	parser = optparse.OptionParser('Example: '+scriptname+' -d "inurl:php?id="')
@@ -38,11 +51,14 @@ def main():
     	dork = options.dork
     	dorkList=options.dorkList
 
-    	if (dork == None):
+    	if (dork == None) & (dorkList == None):
         	print '[-] You must specify a dork or dorkList'
         	exit (0)
 
-    	duckDuckGo(dork)
+        elif (dork != None):
+            duckDuckGoSimple(dork)
+        elif (dorkList != None):
+            duckDuckGoList(dorkList)
 
 if __name__ == '__main__':
      	main()
