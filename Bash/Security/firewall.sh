@@ -1,55 +1,37 @@
-#!/bin/bash
-### BEGIN INIT INFO
-# Provides:          firewall
-# Required-Start:
-# Required-Stop:
-# Default-Start:     2 3 4 5
-# Default-Stop:      0 1 6
-# X-Interactive:     true
-# Short-Description: Start/Stop/Status Iptables Firewall script
-### END INIT INFO
-
 #############################################################################
-# Script de configuration iptables pour Debian
-# Modif : 24/04/2014
-#   . Ajout de la prevention contre les DDoS
-#---------------------------------------------------------------------------
-# Utilisation du script :
-# cp firewall.sh /etc/init.d/firewall
-# Activation au demarrage : update-rc.d firewall defaults
-# Desactivation au démarrage : update-rc.d --force firewall remove
-#
-# Ajouter cette ligne dans /etc/crontab
-# 0  5    * * *   root    /etc/init.d/firewall restart &> /dev/null
+# Script de configuration iptables					    #
+#   									    #
+#---------------------------------------------------------------------------#
+# Utilisation du script :					            #
+# cp firewall.sh /etc/init.d/firewall					    #
+# Activation au demarrage : update-rc.d firewall defaults		    #
+# Desactivation au démarrage : update-rc.d --force firewall remove	    #
+#									    #
+# Ou ajouter une ligne dans le /etc/crontab pour le lancer au démarrage     #
 #############################################################################
 
-
+##Définition des variables
 SSH_PORT="22"
 TMP="/tmp/_iptables.txt"
 ## ! IP des serveurs de monitoring !
-MONITORING_IP_LIST=("192.168.1.5")
-
+MONITORING_IP_LIST=("192.168.2.47")
+ADMIN_MACHINE=("192.168.2.47")
+AD_SERVER="192.168.2.47"
+AV_SERVER="192.168.2.47"
+file="/root/iptables.txt"
+##Désactivation de firewalld
 systemctl disable firewalld
 systemctl stop firewalld
+
 ###############
 #  Fonctions  #
 ###############
 
-fail2ban_present() {
-    echo -e "Fail2ban est-il installe ? : ${FAIL2BAN_OK}"
-    if [[ ${FAIL2BAN_OK} != "ii" ]] ; then
-    	echo -e "\nFail2ban n'est pas installé. Démarrage de l'installation..."
-    	echo -e "yum install fail2ban"
-    	yum -y install fail2ban 2>&1 /dev/null
-    	echo -e "Installation de Fail2ban : [OK]"
-    fi
-}
 
 reset_iptables() {
         #-------------------------------------------------------------------
         # Reset des tables et regles iptables
         #-------------------------------------------------------------------
-        fail2ban_present
         # Vider les tables actuelles
         iptables -t filter -F
         # Vider les regles personnelles
@@ -111,15 +93,18 @@ ssh_connexion() {
         # Connexion SSH
         # Attention a utiliser le bon port !
         #--------------------------------------------------------------------
-        # SSH In
-        iptables -t filter -A INPUT -p tcp --dport ${SSH_PORT} -j ACCEPT
-        # SSH Out
-        iptables -t filter -A OUTPUT -p tcp --dport ${SSH_PORT} -j ACCEPT
-        iptables -t filter -A OUTPUT -p tcp --dport ${SSH_PORT} -j ACCEPT
-
-        echo "Autorisation de la connexion SSH (port ${SSH_PORT}) : [OK]"
+	for admin_ip  in "${ADMIN_IP[@]}"
+        do
+		#SSH In
+		iptables -t filter -A INPUT -p tcp --dport ${SSH_PORT} -s ${admin_ip} -j ACCEPT
+        	# SSH Out
+        	iptables -t filter -A OUTPUT -p tcp --dport ${SSH_PORT} -j ACCEPT
+        	iptables -t filter -A OUTPUT -p tcp --dport ${SSH_PORT} -j ACCEPT
+        done
+	echo "Autorisation de la connexion SSH (port ${SSH_PORT}) : [OK]"
 }
 
+                
 dns_connexion() {
         #--------------------------------------------------------------------
         # DNS
@@ -212,6 +197,23 @@ nagios_connexion() {
         echo "Autorisation des connexions Nagios NRPE : [OK]"
 }
 
+ldap_connexion() {
+
+	##Connexion à l'Active Directory
+	iptables -t filter -A INPUT -p tcp --dport 3389 -s ${AD_SERVER} -j ACCEPT
+	iptables -t filter -A OUTPUT -p tcp --dport 3389 -s ${AD_SERVER} -j ACCEPT
+	
+}
+
+av_connexion() {
+
+	##Connexion à l'Active Directory
+	iptables -t filter -A INPUT -p tcp --dport 4122 -s ${AV_SERVER} -j ACCEPT
+	iptables -t filter -A INPUT -p tcp --dport 4123 -s ${AV_SERVER} -j ACCEPT
+	iptables -t filter -A OUTPUT -p tcp --dport 4122 -j ACCEPT
+	iptables -t filter -A OUTPUT -p tcp --dport 4123 -j ACCEPT
+	
+}
 
 block_port_scan() {
 		#-----------------------------------------------------------------------
@@ -271,7 +273,11 @@ iptables_start() {
         #ftp_connexion
         #smtp_connexion
         postgresql_connexion
+	ldap_connexion
+	av_connexion
         block_port_scan
+	iptables-save > ${file}
+	echo "Les règles ont été sauvegardées dans ${file}"
         return 0
 }
 
@@ -286,7 +292,6 @@ case ${1} in
             echo "Starting firewall..."
             iptables_start
             sleep 1
-            [[ ${FAIL2BAN_OK} == "ii" ]] && /etc/init.d/fail2ban restart
             echo "done."
         ;;
         restart)
@@ -296,14 +301,12 @@ case ${1} in
             echo "Starting firewall..."
             iptables_start
             sleep 1
-            [[ ${FAIL2BAN_OK} == "ii" ]] && /etc/init.d/fail2ban restart
             echo "done."
         ;;
         stop)
             echo "Stopping firewall..."
             iptables_stop
             sleep 1
-            [[ ${FAIL2BAN_OK} == "ii" ]] && /etc/init.d/fail2ban restart
             echo "done."
         ;;
         status)
