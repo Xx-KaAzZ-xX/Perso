@@ -1,0 +1,23 @@
+#Exécutiondeinsmod,rmmodetmodprobe
+-w /sbin/insmod		-p x
+-w /sbin/modprobe	-p x
+-w /sbin/rmmod    	-p x
+#Journaliser les modifications dans /etc/
+-w /etc/ -p wa
+#Surveillance demontage/démontage
+-a exit,always -S mount -S umount2
+
+#Appels de syscallsx86suspects
+-a exit,always -S ioperm -S modify_ldt
+
+#Appels de syscalls qui doivent être rares etsurveillés de près
+-a exit,always -S get_kernel_syms -S ptrace-a exit,always -S prctl
+
+#Rajoutdumonitoringpourlacréationousuppressiondefichiers#Cesrèglespeuventavoirdesconséquencesimportantessurles
+#performancesdusystème
+#-a exit,always -F arch=b64 -S unlink -S rmdir -S rename
+#-a exit,always -F arch=b64 -S creat -S open -S openat -F exit=-EACCESS
+#-a exit,always -F arch=b64 -S truncate -S ftruncate    -F exit=-EACCESS
+
+#Verrouillagedelaconfigurationdeauditd
+-e 2
