@@ -15,18 +15,16 @@ DSS_DEPENDENCIES="/mnt/c/Users/anon/Documents/DSS/DSS_DPKG_DEPENDENCIES/pkg"
 ##Création de l'arborescence
 useradd -m -s /bin/bash ${username}
 echo "${username}:${unix_passwd}" | chpasswd
-su - ${username}
 
 home_dir="/home/${username}/"
 data_dir="/home/${username}/data_dir"
 mkdir ${data_dir}
-echo "Extracting Dataiku installation files"
-#tar xvzf ${dataiku_archive} -C ${home_dir}
+su - ${username} -c "tar xvzf ${dataiku_archive} -C ${home_dir}"
 echo "Installing Dataiku Dependencies..."
 dpkg -i ${DSS_DEPENDENCIES}/*
 
 
 ##Lancer l'installation
-${home_dir}/dataiku-dss-8.0.4/installer.sh -d ${data_dir} -p 11000
+su - ${username} -c "${home_dir}/dataiku-dss-8.0.4/installer.sh -d ${data_dir} -p 11000"
 
-echo "Done, dataiku password "${unix_passwd}""
+echo "Done, dataiku password: "${unix_passwd}""
