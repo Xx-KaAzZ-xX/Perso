@@ -6,12 +6,14 @@ $dssDependencies = "$PSScriptRoot\DSS_DPKG_DEPENDENCIES"
 $dssDeployment = "$PSScriptRoot\DSS-deployment.ps1"
 $winVersion = Get-ComputerInfo
 $winVersion = [int]$winVersion.WindowsVersion
-$bootScript = "C:\Users\anon\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\script.bat"
+$username = whoami
+$username = ($username -split '\\')[-1]
+$bootScript = "C:\Users\$username\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\script.bat"
 
 
 
 if (!(Test-Path -Path $ubuntuPackage)){
-    echo "Missing Ubuntu APPTX File"
+    echo "Missing Ubuntu ZIP Archive"
     echo "Script will exit."
     exit 1
 }
