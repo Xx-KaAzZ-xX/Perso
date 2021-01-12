@@ -10,6 +10,7 @@ username="dataiku"
 ##Voir pour générer ses variables depuis le script en powershell Windows
 dataiku_archive="/mnt/c/Users/adm-cra/Documents/Script_DSS/dataiku-dss-8.0.4.tar.gz"
 Script_DSS_DEPENDENCIES="/mnt/c/Users/adm-cra/Documents/Script_DSS/DSS_DPKG_DEPENDENCIES/pkg/"
+license="/mnt/c/Users/adm-cra/Documents/Script_DSS/license.json"
 
 # 1. Create dataiku user with random generated password
 ##Création de l'arborescence
@@ -26,7 +27,7 @@ dpkg -i ${Script_DSS_DEPENDENCIES}/*.deb
 
 ##Lancer l'installation et le lancement automatique au démarrage
 
-su - ${username} -c "${home_dir}/dataiku-dss-8.0.4/installer.sh -d ${data_dir} -p 11000"
+su - ${username} -c "${home_dir}/dataiku-dss-8.0.4/installer.sh -d ${data_dir} -p 11000 -l ${license}"
 su - ${username} -c "${data_dir}/bin/dss start"
 /home/${username}/dataiku-dss-8.0.4/scripts/install/install-boot.sh "${data_dir}" ${username}
 echo "Done, dataiku password: ${unix_passwd}"
