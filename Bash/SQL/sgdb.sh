@@ -10,7 +10,7 @@
 
 
 # Pense-bête : Il reste à ajouter dans la partie Postgres : il faut passer les commandes à la db une fois qu'on est connecté dessus
-
+date=$(date +%Y%m%d)
 my_exit()
 {
   echo "Keyboard interrupt detected. Please type 'quit' to exit this program."
@@ -219,6 +219,7 @@ do
   3.  List databases
   4.  Get databases size
   5.  Select a database
+  6.  Backup a database
 
   Enter 'r' or 'return' to return to main menu
 POSTGREMENU
@@ -245,8 +246,8 @@ ORDER BY pg_database_size(t1.datname) DESC;\""
       ;;
     5)runuser -l postgres -c "psql -c \"\\\\l\""
       echo "Which database do you want to connect to ?"
-      read db_choice
-      runuser -l postgres -c "psql -c \"\connect ${db_choice}\""
+      read db_name
+      runuser -l postgres -c "psql -c \"\connect ${db_name}\""
       while true
       do
         cat << POSTGREDBMENU
@@ -260,6 +261,7 @@ ORDER BY pg_database_size(t1.datname) DESC;\""
    Select an option :
 
    1.  List tables
+   2.  List actives queries
 
    Enter 'r' or 'return' to return to main menu
 POSTGREDBMENU
@@ -267,11 +269,18 @@ POSTGREDBMENU
       case "${postgres_choice}" in
         1)runuser -l postgres -c "psql -c \"\dt\""
         ;;
+	2)echo "${db_name}"
+	runuser -l postgres -c "psql -c \"SELECT pid, age(query_start, clock_timestamp()), usename, query  FROM pg_stat_activity WHERE datname = '${db_name}' AND query != '<IDLE>' AND query NOT ILIKE '%pg_stat_activity%' ORDER BY age;\""
+	;;
         r|return) postgresql_menu
         ;;
         *) echo "Please make a choice";;
       esac
       done
+      ;;
+    6)read -p "Database name to backup: " db_name
+      file="${date}-${db_name}.sql"
+      runuser -l postgres -c "pg_dump -d ${db_name} > /tmp/${file}" && echo "Your backup is availablehere: /tmp/${file}"
       ;;
     r|return) main_menu;;
     *) echo "Please make a choice";;
