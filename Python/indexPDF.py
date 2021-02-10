@@ -6,6 +6,7 @@ import requests
 import pandas
 import os
 import string
+import shutil
 from tika import parser
 from elasticsearch import Elasticsearch, helpers
 
@@ -15,6 +16,8 @@ tika_server = "http://192.168.2.25:9998/tika"
 es_server = "http://localhost:9200"
 index = "index-pdf"
 pdf_dir = "/home/anon/test"
+indexes_dir = "/home/anon/DOCUMENTS_INDEXES"
+non_indexes_dir = "/home/anon/DOCUMENTS_NON_INDEXES"
 df = pandas.DataFrame(columns = ("name", "content", "metadata"))
 # create a client instance of the library
 elastic_client = Elasticsearch(http_compress=True)
@@ -33,7 +36,7 @@ for pdf in os.listdir(pdf_dir):
         #On ajoute ensuite 1 à chaque itération pour indexer un autre document
         i += 1
 for index, row in df.iterrows():
-    #print (row)
+    filepath = row['name']
     op_dict = {
         "index": {
             "_index": 'index-pdf',
@@ -43,5 +46,14 @@ for index, row in df.iterrows():
             "metadata": row['metadata']
         }
     }
-    elastic_client.index(index = 'index-pdf', body = op_dict)
-    #helpers.bulk(elastic_client, [op_dict])
+    try:
+        elastic_client.index(index = 'index-pdf', body = op_dict)
+        filename = filepath.split('/')[-1]
+        index_file_path = indexes_dir + '/' + filename
+        shutil.move(filepath, index_file_path)
+        #helpers.bulk(elastic_client, [op_dict])
+    except Exception as e:
+        print (e)
+        filename = filepath.split('/')[-1]
+        non_index_file_path = non_indexes_dir + '/' + filename
+        shutil.move(filepath, non_index_file_path)
