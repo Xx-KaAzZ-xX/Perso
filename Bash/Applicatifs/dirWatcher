@@ -1,0 +1,31 @@
+#!/bin/bash
+
+WATCHER_SCRIPT="/root/watchDir.sh"
+PID_FILE="/var/run/dirwatcher.pid"
+
+case "$1" in 
+start)
+   bash ${WATCHER_SCRIPT} &
+   echo $!>${PID_FILE}
+   ;;
+stop)
+   kill `cat ${PID_FILE}`
+   rm ${PID_FILE}
+   ;;
+restart)
+   $0 stop
+   $0 start
+   ;;
+status)
+   if [ -e ${PID_FILE} ]; then
+      echo ${WATCHER_SCRIPT} is running, pid=`cat ${PID_FILE}`
+   else
+      echo ${WATCHER_SCRIPT} is NOT running
+      exit 1
+   fi
+   ;;
+*)
+   echo "Usage: $0 {start|stop|status|restart}"
+esac
+
+exit 0 
