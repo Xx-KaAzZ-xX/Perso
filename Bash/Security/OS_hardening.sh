@@ -1,10 +1,16 @@
 #!/bin/bash
 
+
 ##Variables à définir avant l'exécution du script
 DOMAIN_NAME="ad.lan"
 ADMIN_GROUP="Administrateurs"
 SYSCTL_FILE="anssi_sysctl-conf"
+USER_UMASK_VALUE="027"
+##Liste des executables setuid à modifier
+SETUID_EXEC="setuid_list.txt"
+LOCAL_USER="anon" #sera adm-cra sur l'infra
 
+#voir pour rajouter la système
 #Check if machine is in Active Directory
 realm list | grep active-directory > /dev/null 2>&1
 
@@ -47,7 +53,7 @@ root    ALL=(ALL)   ALL
 _EOF_
 
 
-##Durcissement de la sécurité avec le fichier sysctl de l'ANSSI
+##Durcissement de la sécurité avec le fichier sysctl des recommandations de l'ANSSI
 
 [ ! -f ./${SYSCTL_FILE} ] && echo "Le fichier ${SYSCTL_FILE} doit être dans le répertoire du script" && exit 1
 
@@ -61,9 +67,9 @@ cp /etc/pam.d/common-password /etc/pam.d/common-password.bak
 cp /etc/login.defs /etc/login.defs.bak
 
 echo -e "#Fichier/etc/pam.d/passwd
-#Aumoins12caractères,pasderépétitionnideséquencemonotone,
-#3classesdifférentes(parmimajuscules,minuscules,chiffres,autres)
-passwordrequired	pam_cracklib.so minlen=12 minclass=3	\
+#Au moins 12 caractères ,pas de répétition ni de séquence monotone,
+#3 classes différentes (parmi majuscules,minuscules,chiffres,autres)
+password	required	pam_cracklib.so minlen=12 minclass=3	\
 				dcredit=0 ucredit=0 lcredit=0	\
 				ocredit=0 maxrepeat=1		\
 				maxsequence=1 gecoscheck	\
@@ -77,8 +83,56 @@ echo "[-] Account locked after 3 fails : OK"
 ##Durcissement du stockage des mots de passe
 echo -e "password	required	pam_unix.so	obscure sha512 rounds=65536" | tee -a /etc/pam.d/common-password
 echo -e "ENCRYPT_METHOD	SHA512
-SHA_CRYPT_MIN_ROUNDS	65536" | tee -a /etc/login.defs
-sed '/UMASK/d' /etc/login.defs
-echo "UMASK	027" | tee -a /etc/login.defs
+SHA_CRYPT_MIN_ROUNDS	65536" | tee -a /etc/login.defs && echo "[-] Protection of saved passwords increased : OK"
+cp /etc/profile /etc/profile.bak
+echo "UMASK	${USER_UMASK_VALUE}" | tee -a /etc/profile && echo "[-] Umask value for users set to 027 : OK"
+
+##Enlever le setuid et setgid pour les executables de la liste
+
+echo "Voulez-vous supprimer les setuid et setgid ?"
+select yn in "yes" "no"
+do
+    case ${yn} in
+        yes)
+        echo "Suppression des setuid..."
+        if [[ -f ${SETUID_EXEC} ]];
+        then
+                cat ${SETUID_EXEC} | while read line
+        do
+                #echo $line
+                find ${line} -type f -perm /600 -ls 2>/dev/null && chmod u-s ${line} && chmod g-s ${line}
+        done
+        else
+                echo "${SETUID_EXEC} doit être dans le même répertoire que le script"
+        fi
+        echo "[-] Suppression des setuid : OK"
+        break
+        ;;
+        no)
+        break
+        ;;
+    esac
+done
+
+##Recherche des fichiers sans utilisateurs ni groupes
+#Recherche des fichiers sans utilisateurs ni groupes
+echo "Recherche des fichiers sans utilisateur ou groupe défini..."
+find / -type f \( -nouser -o -nogroup \) -ls 2>/dev/null | awk '{print $11}' > file_without_user.txt
+nb_line=$(cat file_without_user.txt | wc -l)
+if [[ ${nb_line} -eq 0 ]];
+then
+        echo "[-] Pas de fichiers sans utilisateur indéfini"
+else
+        cat file_without_user.txt | while read line
+        i=0
+        do
+                echo $line
+                chown ${LOCAL_USER}:${LOCAL_USER} ${line}
+                i= $i + 1
+        done
+echo "[-] Attribution de ${i} à l'utilisateur ${LOCAL_USER} : OK"
+fi
+
+rm file_without_user.txt
 
 exit 0
