@@ -67,6 +67,7 @@ cp /etc/pam.d/common-password /etc/pam.d/common-password.bak
 cp /etc/login.defs /etc/login.defs.bak
 
 echo -e "#Fichier/etc/pam.d/passwd
+## Cette partie rentre en conflit avec les scripts de durcissement CIS DEBIAN OVH
 #Au moins 12 caractères ,pas de répétition ni de séquence monotone,
 #3 classes différentes (parmi majuscules,minuscules,chiffres,autres)
 password	required	pam_cracklib.so minlen=12 minclass=3	\
