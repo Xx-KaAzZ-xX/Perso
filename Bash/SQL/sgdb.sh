@@ -2,7 +2,6 @@
 #
 # Filename : sgdb.sh
 # Version  : 1.1
-# Author   : Aurélien DUBUS
 # Description :
 #  .    Script to manage some stuff on differents DB server
 #  .
