@@ -1,7 +1,6 @@
 #!/bin/bash
 
 #.  Description : Shell script to check in a list of emails if adresses exists without sending emails
-#.  Author:   Aurélien DUBUS
 #.  Version : 1.0
 
 
