@@ -1,7 +1,6 @@
 #!/bin/bash
 
-#.  Author : Aurélien DUBUS
-#.  Version : 1.0
+
 #.  Description : Script that allows to download a package and all it's dependencies.
 
 usage() {
