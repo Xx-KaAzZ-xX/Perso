@@ -22,4 +22,3 @@ ansible 192.168.56.12 -i inventaire -m service -a "name=httpd state=started"
 #ansible all -i inventaire -m reboot --become
 
 exit 0
-vagrant@deb
