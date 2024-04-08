@@ -2,6 +2,7 @@
 import requests
 import argparse
 import json
+import re
 
 def get_url_analysis(url, api_key):
     headers = {
@@ -43,12 +44,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Submit URL to VirusTotal')
     parser.add_argument('-u', '--url', type=str, required=True, help='URL to submit')
     args = parser.parse_args()
-    
+
     # Spécifiez votre clé API ici
     api_key = ''
     scan_url = args.url
-    output_file = scan_url + ".json"
-
+    pattern = r"https?://(?:www\.)?([^/]+)"
+    # Recherche du nom de domaine dans l'URL
+    match = re.match(pattern, scan_url)
+    if match:
+        domain = match.group(1)
+        print (domain)
+    output_file = domain + ".json"
     # Soumettre l'URL pour l'analyse
     analysis_id = get_url_analysis(scan_url, api_key)
     if analysis_id:
@@ -67,7 +73,8 @@ if __name__ == "__main__":
                     display_report(report, scan_url)
                     print("Ecriture du fichier json")
                     with open(output_file, "w") as f:
-                        json.dump(report, f, indent=4)
+                        json.dump(report, f)
                 else:
                     print('Analysis completed. No malicious detections found.')
                 break
+~                          
