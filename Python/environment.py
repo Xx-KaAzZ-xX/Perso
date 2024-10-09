@@ -259,24 +259,66 @@ def get_storage_info(mount_path):
     chaine = "Informations de stockage "
     print(bandeau(chaine))
     print(disk_usage)
-'''
-def get_network_info(mount_path):
-    chaine = "Informations réseau "
-    print(bandeau(chaine))
-'''
 
-def get_users(mount_path):
-    chroot_command = "cat /etc/passwd"
-    chaine = "Utilisateurs sur le système"
-    print(bandeau(chaine))
-    chroot_and_run_command(mount_path, chroot_command)
+def get_users_and_groups(mount_path, computer_name):
+    output_file = script_path + "/" + result_folder + "/" + "users_and_groups.csv"
+    users = []
+    groups = []
+    print("[+] Retrieving users & groups informations")
+    # Command to get users from /etc/passwd
+    passwd_file = os.path.join(mount_path, "etc/passwd")
+    group_file = os.path.join(mount_path, "etc/group")
 
-def get_groups(mount_path):
-    chroot_command = "cat /etc/group"
-    chaine = "Groupes sur le système"
-    print(bandeau(chaine))
-    chroot_and_run_command(mount_path, chroot_command)
+    # Parse /etc/passwd to get users and their IDs
+    with open(passwd_file, 'r') as passwd:
+        for line in passwd:
+            parts = line.strip().split(':')
+            if len(parts) > 6:
+                username = parts[0]
+                uid = parts[2]
+                gid = parts[3]
+                user_info = {
+                    'username': username,
+                    'uid': uid,
+                    'gid': gid,
+                    'groups': []
+                }
+                users.append(user_info)
 
+    # Parse /etc/group to get groups, group IDs, and members
+    with open(group_file, 'r') as group:
+        for line in group:
+            parts = line.strip().split(':')
+            if len(parts) > 3:
+                groupname = parts[0]
+                gid = parts[2]
+                members = parts[3].split(',') if parts[3] else []
+                groups.append({
+                    'groupname': groupname,
+                    'gid': gid,
+                    'members': members
+                })
+                # Assign groups to users
+                for user in users:
+                    if user['username'] in members or user['gid'] == gid:
+                        user['groups'].append(groupname)
+
+    # Write to CSV
+    with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+        fieldnames = ['computer_name', 'username', 'uid', 'gid', 'groups']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+        writer.writeheader()
+        for user in users:
+            writer.writerow({
+                'computer_name': computer_name,
+                'username': user['username'],
+                'uid': user['uid'],
+                'gid': user['gid'],
+                'groups': ','.join(user['groups'])
+            })
+
+    print(f"Users and groups information written to {output_file}")
 
 def list_connections(mount_path):
     chaine = "Liste des connexions"
@@ -694,31 +736,6 @@ def get_windows_network_info(mount_path, computer_name):
         print(f"Network information has been written into {output_file}")
     except Exception as e:
         print(f"Erreur lors de l'écriture dans le fichier CSV: {e}")
-'''
-def get_windows_users(mount_path):
-    chaine = "Liste des utilisateurs Windows"
-    print(bandeau(chaine))
-
-    path_to_reg_hive = mount_path + 'Windows/System32/config/SAM'
-
-    try:
-        # Ouvrir la ruche SAM
-        reg = Registry.Registry(path_to_reg_hive)
-    except Registry.RegistryParseException as e:
-        print(f"Error opening SAM hive: {e}")
-        sys.exit(-1)
-
-    try:
-        # Ouvrir la clé contenant les informations des utilisateurs
-        key = reg.open("SAM\\Domains\\Account\\Users\\Names")
-    except Registry.RegistryKeyNotFoundException:
-        print("Couldn't find the key. Exiting...")
-        sys.exit(-1)
-
-    # Parcourir les sous-clés pour obtenir les noms des utilisateurs
-    for subkey in key.subkeys():
-        print(f"User: {subkey.name()}")
-'''
 def get_windows_users(mount_path, computer_name):
 
     output_file = script_path + "/" + result_folder + "/" + "windows_users.csv"
@@ -788,45 +805,59 @@ def get_windows_users(mount_path, computer_name):
     except Exception as e:
         print(f"Erreur lors de l'écriture dans le fichier CSV: {e}")
 
+def get_windows_groups(mount_path, computer_name):
+    output_file = script_path + "/" + result_folder + "/" + "windows_groups.csv"
+    print("[+] Retrieving groups and their members information")
 
-def get_windows_groups(mount_path):
-    chaine = "Liste des groupes Windows"
-    print(bandeau(chaine))
-    path_to_reg_hive = mount_path + 'Windows/System32/config/SAM'
-    reg = Registry.Registry(path_to_reg_hive)
+    path_to_reg_hive = os.path.join(mount_path, 'Windows/System32/config/SAM')
 
     try:
-        key = reg.open("SAM\\Domains\\Builtin\\Aliases\\Names")
-    except Registry.RegistryKeyNotFoundException:
-        print("Couldn't find the key. Exiting...")
-        sys.exit(-1)
-    print
-    for subkey in key.subkeys():
-        print(f"Group: {subkey.name()}")
-
-def get_powershell_history(mount_path):
-    chaine = "Historique des commandes PowerShell"
-    print(bandeau(chaine))
-
-    users_path = os.path.join(mount_path, 'Users')
-    if not os.path.isdir(users_path):
-        print(f"Le chemin {users_path} n'existe pas ou n'est pas un répertoire.")
+        reg = Registry.Registry(path_to_reg_hive)
+    except Exception as e:
+        print(f"Error opening SAM hive: {e}")
         return
 
-    for user_dir in os.listdir(users_path):
-        user_path = os.path.join(users_path, user_dir)
-        history_path = os.path.join(user_path, 'AppData', 'Roaming', 'Microsoft', 'Windows', 'PowerShell', 'PSReadLine', 'ConsoleHost_history.txt')
-        if os.path.isfile(history_path):
-            print(f"\nHistorique des commandes PowerShell pour l'utilisateur : {user_dir}")
+    try:
+        groups_key = reg.open("SAM\\Domains\\Builtin\\Aliases")
+    except Registry.RegistryKeyNotFoundException:
+        print("Couldn't find the key for groups. Exiting...")
+        return
+
+    with open(output_file, 'w') as csv_file:
+        csv_file.write("group_name,members\n")
+
+        # Parcourir les groupes
+        for group_subkey in groups_key.subkeys():
+            group_name = group_subkey.name()
+            print(f"Processing group: {group_name}")
+
             try:
-                with open(history_path, 'r', encoding='utf-8') as file:
-                    history = file.readlines()
-                    for command in history:
-                        print(command.strip())
+                # Essayons d'obtenir la valeur par défaut pour le RID
+                group_rid_value = group_subkey.value("(default)")
+                if group_rid_value is not None:
+                    group_rid = group_rid_value.value()
+                    print(f"Group RID for {group_name}: {group_rid}")
+
+                    # Tenter de récupérer les membres en fonction du RID
+                    try:
+                        members_key = reg.open(f"SAM\\Domains\\Builtin\\Aliases\\{group_name}\\Members")
+                        members = []
+                        for member_subkey in members_key.subkeys():
+                            member_sid = member_subkey.name()
+                            members.append(member_sid)
+
+                        members_str = ";".join(members) if members else "None"
+                        csv_file.write(f"{group_name},{members_str}\n")
+                    except Registry.RegistryKeyNotFoundException:
+                        print(f"Couldn't find members for group {group_name}. Continuing...")
+                else:
+                    print(f"No RID found for group {group_name}. Continuing...")
+
             except Exception as e:
-                print(f"Une erreur s'est produite lors de la lecture de {history_path} : {e}")
-        else:
-                print(f"Le fichier {history_path} n'existe pas pour l'utilisateur {user_dir}.")
+                print(f"Error processing group {group_name}: {e}")
+
+    print(f"Groups and members written to {output_file}")
+
 
 
 def get_startup_services(mount_path):
@@ -952,8 +983,9 @@ def get_windows_installed_programs(mount_path, computer_name):
         "WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"
     ]
 
-    output_file = "installed_programs.csv"
-    csv_columns = ['ComputerName','DisplayName', 'DisplayVersion', 'InstallDate', 'Publisher']
+    output_file = script_path + "/" + result_folder + "/" +  "installed_programs.csv"
+    csv_columns = ['computer_name','DisplayName', 'DisplayVersion', 'InstallDate', 'Publisher']
+    print("[+] Retrieving installed programs")
 
     try:
         reg = Registry.Registry(os.path.join(mount_path, 'Windows/System32/config/SOFTWARE'))
@@ -974,7 +1006,7 @@ def get_windows_installed_programs(mount_path, computer_name):
 
             for subkey in key.subkeys():
                 program_info = {
-                    'ComputerName': computer_name,
+                    'computer_name': computer_name,
                     'DisplayName': '',
                     'DisplayVersion': '',
                     'InstallDate': '',
@@ -994,8 +1026,58 @@ def get_windows_installed_programs(mount_path, computer_name):
                 if program_info['DisplayName']:  # Only write if there is a program name
                     writer.writerow(program_info)
 
-    print(f"Installed programs written to {output_file}")
+    print(f"Installed programs have been written into {output_file}")
+'''
+def get_windows_executed_programs(amcache_path, computer_name):
+    output_file = script_path + "/" + result_folder + "/" + "executed_programs.csv"
+    csv_columns = ['computer_name', 'filepath', 'executed_date']
+    print("[+] Retrieving executed programs")
 
+    # Ouvrir le fichier de registre Amcache.hve
+    try:
+        reg = Registry.Registry(amcache_path)
+    except Exception as e:
+        print(f"Error opening Amcache.hve: {e}")
+        return
+
+    # Ouvrir la clé Root\File qui contient les informations sur les exécutables
+    try:
+        key = reg.open("Root\\File")
+    except Registry.RegistryKeyNotFoundException:
+        print("Couldn't find the Amcache key. Exiting...")
+        return
+
+    with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=csv_columns)
+        writer.writeheader()
+
+        # Parcourir et lister les sous-clés de Root\File
+        for subkey in key.subkeys():
+            program_info = {
+                'computer_name': computer_name,
+                'filepath': '',
+                'executed_date': ''
+            }
+            try:
+                # Parcourir et lister les sous-clés de cette sous-clé
+                for sub_subkey in subkey.subkeys():
+                    for value in sub_subkey.values():
+                        # print(f"{value.name()}")
+                        # print(f"{value.value()}")
+                        if value.name() == "17":
+                            win_timestamp = (value.value())
+                            print("Executed date: " + str(get_windows_timestamp(win_timestamp)))
+                            program_info['executed_date'] = str(get_windows_timestamp(win_timestamp))
+                        if value.name() == "15":
+                            print(f"Filepath : {value.value()}")
+                            program_info['filepath'] = (value.value())
+            except Registry.RegistryKeyNotFoundException as e:
+                print(f"Error accessing subkeys of {subkey.name()}: {e}")
+                continue
+            if program_info['filepath']:
+                writer.writerow(program_info)
+    print(f"Executed programs have been written into {output_file}")
+'''
 def get_windows_executed_programs(amcache_path):
     chaine = "Windows Executed Programs from Amcache"
     print(bandeau(chaine))
@@ -1065,6 +1147,8 @@ def determine_platform(mount_path):
 # Appeler les fonctions pour afficher les informations
 if len(sys.argv) > 1:
     mount_path = sys.argv[1]
+    if not mount_path.endswith('/'):
+        mount_path += '/'
     amcache_path = mount_path + "Windows/AppCompat/Programs/Amcache.hve"
     script_path = os.path.dirname(os.path.realpath(__file__))
     normalized_mount_path = os.path.normpath(mount_path)
@@ -1083,7 +1167,7 @@ if len(sys.argv) > 1:
             computer_name = get_system_info(mount_path)
             #get_storage_info(mount_path)
             get_network_info(mount_path, computer_name)
-            #get_users(mount_path)
+            get_users_and_groups(mount_path, computer_name)
             #get_groups(mount_path)
             #list_installed_apps(mount_path)
             #list_connections(mount_path)
@@ -1098,15 +1182,15 @@ if len(sys.argv) > 1:
             #get_windows_disk_volumes(mount_path)
             get_windows_network_info(mount_path, computer_name)
             get_windows_users(mount_path, computer_name)
-            #get_windows_groups(mount_path)
+            #get_windows_groups(mount_path, computer_name) à finir !!
             #get_windows_rdp_connections(mount_path)
             #get_powershell_history(mount_path)
             #get_windows_services(mount_path)
             #get_startup_services(mount_path)
             #get_windows_firewall_rules(mount_path, computer_name)
             #get_windows_installed_roles(mount_path)
-            get_windows_installed_programs(mount_path, computer_name)
-            #get_windows_executed_programs(amcache_path)
+            #get_windows_installed_programs(mount_path, computer_name) à corriger !!
+            get_windows_executed_programs(amcache_path)
             #hayabusa_evtx(mount_path)
         else:
             print("Unknown OS")
