@@ -66,7 +66,7 @@ def chroot_and_run_command(mount_path, chroot_command):
         print(result.stdout.decode())
     except subprocess.CalledProcessError as e:
         print(f"Command '{chroot_command}' failed with error: {e.stderr.decode()}")
-    
+
     # Restaurer le répertoire courant et la racine d'origine
     finally:
         os.fchdir(original_cwd_fd)
@@ -91,7 +91,8 @@ def get_system_info(mount_path):
     print(f"le fichier d'output est : {output_csv}")
     system_info = {
         'computer_name': '',
-		'distro': '',
+                'distro': '',
+                'installation_date': '',
         'ntp_server': '',
         'dns_server': '',
         'last_update': '',
@@ -128,7 +129,7 @@ def get_system_info(mount_path):
          # Si vous voulez stocker tous les serveurs DNS dans une seule chaîne pour 'system_info'
             if dns_servers:
                 dns_server = ', '.join(dns_servers)  # Joindre les serveurs par des virgules
-                system_info['dns_server'] = dns_server  # Ajoute à system_info            
+                system_info['dns_server'] = dns_server  # Ajoute à system_info
         # Extraction du serveur NTP à partir de ntp.conf
         ntp_server = None
         if os.path.exists(ntp_file):
@@ -139,7 +140,7 @@ def get_system_info(mount_path):
                         system_info['ntp_server'] = ntp_server
                         break
 
-  
+
         # Get installation date
         log_installation_file = os.path.join(mount_path, "var/log/installer/syslog")
         if os.path.exists(log_installation_file):
@@ -151,7 +152,7 @@ def get_system_info(mount_path):
             if os.path.exists(passwd_file):
                 passwd_file_infos = os.stat(passwd_file)
                 timestamp = passwd_file_infos.st_ctime
-                system_info['last_update'] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
+                system_info['installation_date'] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
 
         # Get last event (this could be tailored depending on the log type)
         last_event_log = os.path.join(mount_path, "var/log/syslog")  # Example for Ubuntu/Debian
@@ -161,7 +162,7 @@ def get_system_info(mount_path):
             system_info['last_event'] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
         # Output results to CSV
         with open(output_csv, mode='w', newline='', encoding='utf-8') as csvfile:
-            fieldnames = ['computer_name', 'distro', 'ntp_server', 'dns_server', 'last_update', 'last_event']
+            fieldnames = ['computer_name', 'distro', 'installation_date', 'ntp_server', 'dns_server', 'last_update', 'last_event']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerow(system_info)
@@ -178,8 +179,8 @@ def get_network_info(mount_path, computer_name):
     interfaces_file = os.path.join(mount_path, "etc/network/interfaces")
     netplan_dir = os.path.join(mount_path, "etc/netplan/")
     redhat_ifcfg_dir = os.path.join(mount_path, "etc/sysconfig/network-scripts/")
-    
-	# Préparation pour l'écriture dans le fichier CSV
+
+        # Préparation pour l'écriture dans le fichier CSV
     csv_columns = ['computer_name', 'interface', 'ip_address', 'netmask', 'gateway']
     with open(output_csv, mode='w', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
@@ -221,7 +222,7 @@ def get_network_info(mount_path, computer_name):
                         if iface:
                             writer.writerow({'Interface': iface, 'IP Address': ip, 'Netmask': netmask, 'Gateway': gateway})
                            #writer.writerow({'Interface': 'netplan', 'IP Address': ip, 'Netmask': 'N/A', 'Gateway': gateway})
-                            
+
         if os.path.exists(netplan_dir):
             for filename in os.listdir(netplan_dir):
                  if filename.endswith('.yaml') or filename.endswith('.yml'):  # Vérifier que c'est un fichier YAML
@@ -280,7 +281,7 @@ def get_groups(mount_path):
 def list_connections(mount_path):
     chaine = "Liste des connexions"
     print(bandeau(chaine))
-    
+
     # Chemin vers les fichiers de log de connexion
     log_files_path = os.path.join(mount_path, "var/log")
 
@@ -326,7 +327,7 @@ def list_connections(mount_path):
         if "audit" in log_file and os.path.isdir(os.path.join(log_files_path, "audit")):
             audit_dir = os.path.join(log_files_path, "audit")
             audit_files = os.listdir(audit_dir)
-            
+
             print(bandeau("Recherche des connexions réussies dans les fichiers audit.log"))
 
             for audit_file in audit_files:
@@ -336,7 +337,7 @@ def list_connections(mount_path):
                     # Exécuter zgrep pour trouver les occurrences de "success" dans les fichiers audit.log
                     zgrep_cmd = f"zgrep 'USER_LOGIN' {audit_file_path} | grep 'success'"
                     result_zgrep = subprocess.run(zgrep_cmd, shell=True, capture_output=True, text=True)
-                    
+
                     # Afficher les lignes qui correspondent
                     if result_zgrep.stdout:
                         print(f"Lignes trouvées dans {audit_file_path} :\n{result_zgrep.stdout}")
@@ -396,7 +397,7 @@ def list_installed_apps(mount_path):
                                 else:
                                     print(f"Aucun contenu trouvé dans le fichier {log_file}.")
                 else:
-                    print("Aucun fichier yum.log n'a été trouvé.")           
+                    print("Aucun fichier yum.log n'a été trouvé.")
         else:
             print("Distribution inconnue")
 
@@ -412,9 +413,9 @@ def list_services(mount_path):
         else:
             # Afficher la sortie d'erreur de la commande
             #print(f"Erreur: {result.stderr}")
-        	print("Not managed by Systemd")
+                print("Not managed by Systemd")
     else:
-    	print("System is not managed by Systemd")
+        print("System is not managed by Systemd")
 def get_firewall_rules(mount_path):
     print(bandeau("Firewall Rules Linux"))
     chroot_command = "iptables -L"
@@ -474,8 +475,8 @@ def create_volatility_profile(mount_path):
         print(f"Profil Volatility créé avec succès: {output_zip}")
 
 def get_windows_machine_name(mount_path):
-    chaine = "Informations du système Windows"
-    print (bandeau(chaine))
+    #chaine = "Informations du système Windows"
+    #print (bandeau(chaine))
     path_to_reg_hive = (mount_path+ 'Windows/System32/config/SYSTEM')
     reg = Registry.Registry(path_to_reg_hive)
     try:
@@ -490,74 +491,9 @@ def get_windows_machine_name(mount_path):
     #result = print("%s: %s" % (value.name(), value.value()))
         if value.name() == "ComputerName":
             computer_name = value.value()
-            print(f"Nom de la machine: {computer_name}")
+            #print(f"Nom de la machine: {computer_name}")
             #print("Nom de la machine: "+value.value())
             return computer_name
-
-def get_windows_installation_date(mount_path):
-    path_to_reg_hive = mount_path + 'Windows/System32/config/SOFTWARE'
-    reg = Registry.Registry(path_to_reg_hive)
-    try:
-        #key = reg.open("Microsoft\\Windows NT\\CurrentVersion")
-        key = reg.open("Microsoft\\Windows NT\\CurrentVersion")
-    except Registry.RegistryKeyNotFoundException:
-        print("Couldn't find the key. Exiting...")
-        sys.exit(-1)
-
-    for value in [v for v in key.values() if v.value_type() == Registry.RegDWord]:
-        #print("%s: %s" % (value.name(), value.value()))
-        if value.name() == "InstallDate":
-            install_date_timestamp = (value.value())
-            date_time = datetime.fromtimestamp(install_date_timestamp)
-            print("Date d'installation de la machine: ", date_time)
-            #print("Date d'installation du système: " + formatted_date)
-def get_windows_last_update(mount_path):
-    path_to_reg_hive = mount_path + 'Windows/System32/config/SOFTWARE'
-    reg = Registry.Registry(path_to_reg_hive)
-
-    update_paths = [
-        "Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\Results\\Install",
-        "Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\UpdateCount"
-    ]
-    
-    for update_path in update_paths:
-        try:
-            key = reg.open(update_path)
-            last_update_time = None
-            for value in key.values():
-                if value.name() == "LastSuccessTime" or value.name() == "UpdateCount":
-                    last_update_time = value.value()
-                    break
-            
-            if last_update_time:
-                #print(last_update_time)
-                #last_update_date = convert_filetime_to_datetime(last_update_time)
-                #last_update_date = datetime.fromtimestamp(last_update_time)
-                print(f"Dernière mise à jour du système à partir de {update_path} : {last_update_time}")
-                return
-        except Registry.RegistryKeyNotFoundException:
-            print(f"Couldn't find the key {update_path}. Continuing...")
-            continue
-    
-    print("Aucune information sur la dernière mise à jour trouvée.")
-
-def get_windows_last_functional_date(mount_path):
-    path_to_reg_hive = mount_path + 'Windows/System32/config/SYSTEM'
-    reg = Registry.Registry(path_to_reg_hive)
-    try:
-        #key = reg.open("Microsoft\\Windows NT\\CurrentVersion")
-        key = reg.open("ControlSet001\\Services\\W32Time\\Config")
-    except Registry.RegistryKeyNotFoundException:
-        print("Couldn't find the key. Exiting...")
-        sys.exit(-1)
-
-    for value in [v for v in key.values() if v.value_type() == Registry.RegDWord]:
-        #print("%s: %s" % (value.name(), value.value()))
-        if value.name() == "Last":
-            install_date_timestamp = (value.value())
-            date_time = datetime.fromtimestamp(install_date_timestamp)
-            print("Date d'installation de la machine: ", date_time)
-            #print("Date d'installation du système: " + formatted_date)
 
 def get_windows_storage_info(mount_path):
     try:
@@ -573,13 +509,13 @@ def get_windows_storage_info(mount_path):
 def get_windows_mounted_devices(mount_path):
     path_to_reg_hive = mount_path + 'Windows/System32/config/SYSTEM'
     reg = Registry.Registry(path_to_reg_hive)
-    
+
     try:
         key = reg.open("MountedDevices")
     except Registry.RegistryKeyNotFoundException:
         print("Couldn't find the key. Exiting...")
         sys.exit(-1)
-    
+
     for value in key.values():
         print(f"{value.name()}")
 
@@ -589,7 +525,7 @@ def get_windows_disk_volumes(mount_path):
     print(bandeau(chaine))
     path_to_reg_hive = mount_path + 'Windows/System32/config/SYSTEM'
     reg = Registry.Registry(path_to_reg_hive)
-    
+
     possible_disk_enum_path = [
         "CurrentControlSet\\Services\\Disk\\Enum",
         "ControlSet001\\Services\\Disk\\Enum",
@@ -602,7 +538,7 @@ def get_windows_disk_volumes(mount_path):
 
     # Flag to check if any information is found
     found_any = False
-    
+
     # Iterate over the possible paths
     for path in possible_disk_enum_path:
         try:
@@ -622,7 +558,7 @@ def get_windows_disk_volumes(mount_path):
                 for value in key.values():
                     print(f"{value.name()}: {value.value()}")
                 print("-" * 40)
-                
+
         except Registry.RegistryKeyNotFoundException:
             print(f"Couldn't find the key at {path}. Continuing...")
 
@@ -630,113 +566,253 @@ def get_windows_disk_volumes(mount_path):
         print("No disk information found in any path.")
 
 
-def get_windows_info(mount_path):
-    path_to_reg_hive = mount_path + 'Windows/System32/config/SOFTWARE'
-    reg = Registry.Registry(path_to_reg_hive)
+
+def get_windows_info(mount_path, computer_name):
+    output_file = script_path + "/" + result_folder + "/" + "windows_system_info.csv"  # Assurez-vous que result_folder est défini si nécessaire
+    csv_columns = ['computer_name', 'windows_version', 'installation_date', 'ntp_server', 'last_update', 'last_event']
+
+    # Initialisation des variables
+    system_info = {
+        'computer_name': computer_name,
+        'windows_version': '',
+        'installation_date': '',
+        'ntp_server': '',
+        'last_update': '',
+        'last_event': ''
+    }
+    print("[+] Retrieving system information...")
+    # Récupération des informations NTP (dans le registre SYSTEM)
+    path_to_reg_hive = os.path.join(mount_path, 'Windows/System32/config/SYSTEM')
     try:
+        reg = Registry.Registry(path_to_reg_hive)
+        ntp_key = reg.open("ControlSet001\\Services\\W32Time\\Parameters")
+        for value in ntp_key.values():
+            if value.name() == "NtpServer":
+                system_info['ntp_server'] = value.value()
+    except Exception as e:
+        print(f"Erreur lors de la récupération des informations NTP: {e}")
+
+
+    # Récupération des informations de produit et d'installation (dans le registre SOFTWARE)
+    path_to_reg_hive = os.path.join(mount_path, 'Windows/System32/config/SOFTWARE')
+    try:
+        reg = Registry.Registry(path_to_reg_hive)
         key = reg.open("Microsoft\\Windows NT\\CurrentVersion")
-    except Registry.RegistryKeyNotFoundException:
-        print("Couldn't find the key to get system information. Continuing...")
-        return
-    for value in [v for v in key.values() if v.value_type() == Registry.RegSZ]:
-        if value.name() == "CurrentBuildNumber":
-            print("%s: %s" % (value.name(), value.value()))
-        elif value.name() == "EditionID":
-            print("%s: %s" % (value.name(), value.value()))
-        elif value.name() == "ProductName":
-            print("%s: %s" % (value.name(), value.value()))
-        elif value.name() == "ProductID":
-            print("%s: %s" % (value.name(), value.value()))
+
+        # Récupérer la version de Windows
+        for value in key.values():
+            if value.name() == "ProductName":
+                system_info['windows_version'] = value.value()
+
+        # Récupérer la date d'installation
+        for value in key.values():
+            if value.name() == "InstallDate":
+                install_date_timestamp = value.value()
+                date_time = datetime.fromtimestamp(install_date_timestamp)
+                system_info['installation_date'] = date_time.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception as e:
+        print(f"Erreur lors de la récupération des informations du produit ou de la date d'installation: {e}")
+
+    # Récupération du dernier événement (last_event)
+    try:
+        last_event_log = os.path.join(mount_path, 'Windows/System32/winevt/Logs/System.evtx')
+        if os.path.exists(last_event_log):
+            last_log_infos = os.stat(last_event_log)
+            timestamp = last_log_infos.st_mtime
+            system_info['last_event'] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
+    except Exception as e:
+        print(f"Erreur lors de la récupération du dernier événement: {e}")
+
+        # Récupération de la dernière MAJ
+    try:
+        reg = Registry.Registry(os.path.join(mount_path, 'Windows/System32/config/SOFTWARE'))
+        update_key = reg.open("Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\Results\\Install")
+        for value in update_key.values():
+            if value.name() == "LastSuccessTime":
+                system_info['last_update'] = value.value()
+    except Exception as e:
+        print(f"Erreur lors de la récupération des informations de dernière mise à jour: {e}")
 
 
-def get_windows_network_info(mount_path):
-    chaine = "Informations réseaux Windows"
-    print(bandeau(chaine))
-    path_to_reg_hive = mount_path + 'Windows/System32/config/SYSTEM'
+# Écriture des informations dans un fichier CSV
+    try:
+        with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=csv_columns)
+            writer.writeheader()
+            writer.writerow(system_info)
+        print(f"System information has been written into {output_file}")
+    except Exception as e:
+        print(f"Erreur lors de l'écriture dans le fichier CSV: {e}")
+
+def get_windows_network_info(mount_path, computer_name):
+    path_to_reg_hive = os.path.join(mount_path, 'Windows/System32/config/SYSTEM')
     reg = Registry.Registry(path_to_reg_hive)
-    
+    output_file = script_path + "/" + result_folder + "/" + "windows_network_info.csv"
+    print("[+] Retrieving network information")
+    # Initialisation des données
+    network_info = []
+
     try:
         key = reg.open("ControlSet001\\Services\\Tcpip\\Parameters\\Interfaces")
     except Registry.RegistryKeyNotFoundException:
         print("Couldn't find the network informations. Exiting...")
         return
-    
+
     for subkey in key.subkeys():
-        print(f"Interface: {subkey.name()}")
+        interface_name = subkey.name()
+        ip_address = None
+        netmask = None
+        gateway = None
+        dns_server = None
+
         for value in subkey.values():
             if value.name() == "DhcpIPAddress" or value.name() == "IPAddress":
-                print(f"{value.name()}: {value.value()}")
+                ip_address = value.value()
+            elif value.name() == "SubnetMask":
+                netmask = value.value()
             elif value.name() == "DefaultGateway":
-                print(f"{value.name()}: {value.value()}")
+                gateway = value.value()
             elif value.name() == "NameServer":
-                print(f"{value.name()}: {value.value()}")
+                dns_server = value.value()
 
-    possible_timezone_path = [
-        "ControlSet001\\Control\\TimeZoneInformation",
-        "CurrentControlSet\\Control\\TimeZoneInformation"
-    ]
-    timezone_info_found = False
-    for path in possible_timezone_path:
-        try:
-            timezone_key = reg.open(path)
-            timezone_info_found = True
-            break
-        except Registry.RegistryKeyNotFoundException:
-            print(f"Couldn't find the TimeZoneInformation key at {path}. Continuing...")
+        # Ajouter les informations de l'interface au tableau
+        network_info.append({
+            'computer_name': computer_name,
+            'interface': interface_name,
+            'ip_address': ip_address,
+            'netmask': netmask,
+            'gateway': gateway,
+            'dns_server': dns_server
+        })
 
-    if timezone_info_found:
-        for value in timezone_key.values():
-            if value.name() == "TimeZoneKeyName":
-                print(f"{value.name()}: {value.value()}")
-
+    # Écriture dans le fichier CSV
+    try:
+        with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=['computer_name', 'interface', 'ip_address', 'netmask', 'gateway', 'dns_server'])
+            writer.writeheader()
+            writer.writerows(network_info)
+        print(f"Network information has been written into {output_file}")
+    except Exception as e:
+        print(f"Erreur lors de l'écriture dans le fichier CSV: {e}")
+'''
 def get_windows_users(mount_path):
     chaine = "Liste des utilisateurs Windows"
     print(bandeau(chaine))
-    
+
     path_to_reg_hive = mount_path + 'Windows/System32/config/SAM'
-    
+
     try:
         # Ouvrir la ruche SAM
         reg = Registry.Registry(path_to_reg_hive)
     except Registry.RegistryParseException as e:
         print(f"Error opening SAM hive: {e}")
         sys.exit(-1)
-    
+
     try:
         # Ouvrir la clé contenant les informations des utilisateurs
         key = reg.open("SAM\\Domains\\Account\\Users\\Names")
     except Registry.RegistryKeyNotFoundException:
         print("Couldn't find the key. Exiting...")
         sys.exit(-1)
-    
+
     # Parcourir les sous-clés pour obtenir les noms des utilisateurs
     for subkey in key.subkeys():
         print(f"User: {subkey.name()}")
+'''
+def get_windows_users(mount_path, computer_name):
+
+    output_file = script_path + "/" + result_folder + "/" + "windows_users.csv"
+    print("[+] Retrieving users informations")
+    path_to_reg_hive = os.path.join(mount_path, 'Windows/System32/config/SAM')
+
+    try:
+        # Ouvrir la ruche SAM
+        reg = Registry.Registry(path_to_reg_hive)
+    except Registry.RegistryParseException as e:
+        print(f"Erreur lors de l'ouverture de la ruche SAM : {e}")
+
+    try:
+        # Ouvrir la clé contenant les informations des utilisateurs
+        user_key = reg.open("SAM\\Domains\\Account\\Users\\Names")
+    except Registry.RegistryKeyNotFoundException:
+        print("Couldn't find the key for users. Exiting...")
+
+    # Récupérer les utilisateurs
+    users = {}
+    for subkey in user_key.subkeys():
+        username = subkey.name()
+        # Récupérer la valeur par défaut pour obtenir le SID
+        for value in subkey.values():
+            if value.name() == "(default)":
+                users[username] = value.value()
+
+    # Récupérer les groupes et les SID correspondants
+    group_sids = {}
+    try:
+        group_key = reg.open("SAM\\Domains\\Account\\Groups")
+        for subkey in group_key.subkeys():
+            group_name = subkey.name()
+            for value in subkey.values():
+                if value.name() == "(default)":
+                    group_sids[group_name] = value.value()  # Récupérer le SID du groupe
+                    break
+    except Registry.RegistryKeyNotFoundException:
+        print("Couldn't find the key for groups. Exiting...")
+
+    # Établir l'appartenance des utilisateurs aux groupes
+    user_group_membership = {user: [] for user in users.keys()}
+
+    for group, sid in group_sids.items():
+        try:
+            # Vérifier les utilisateurs dans chaque groupe
+            group_membership_key = reg.open(f"SAM\\Domains\\Account\\Groups\\{group}\\Members")
+            for value in group_membership_key.values():
+                if value.value() in users.values():
+                    # Trouver le nom d'utilisateur correspondant au SID
+                    for username, user_sid in users.items():
+                        if user_sid == value.value():
+                            user_group_membership[username].append(group)
+        except Registry.RegistryKeyNotFoundException:
+            continue
+
+    # Écriture dans un fichier CSV
+    csv_columns = ['computer_name', 'username', 'sid', 'groups']
+
+    try:
+        with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=csv_columns)
+            writer.writeheader()
+            for user, sid in users.items():
+                writer.writerow({'computer_name': computer_name, 'username': user, 'sid': sid, 'groups': ', '.join(user_group_membership[user])})
+        print(f"Les informations sur les utilisateurs et leurs groupes ont été écrites dans {output_file}")
+    except Exception as e:
+        print(f"Erreur lors de l'écriture dans le fichier CSV: {e}")
+
 
 def get_windows_groups(mount_path):
     chaine = "Liste des groupes Windows"
     print(bandeau(chaine))
     path_to_reg_hive = mount_path + 'Windows/System32/config/SAM'
     reg = Registry.Registry(path_to_reg_hive)
-    
+
     try:
         key = reg.open("SAM\\Domains\\Builtin\\Aliases\\Names")
     except Registry.RegistryKeyNotFoundException:
         print("Couldn't find the key. Exiting...")
         sys.exit(-1)
-    print 
+    print
     for subkey in key.subkeys():
         print(f"Group: {subkey.name()}")
 
 def get_powershell_history(mount_path):
     chaine = "Historique des commandes PowerShell"
     print(bandeau(chaine))
-    
+
     users_path = os.path.join(mount_path, 'Users')
     if not os.path.isdir(users_path):
         print(f"Le chemin {users_path} n'existe pas ou n'est pas un répertoire.")
         return
-    
+
     for user_dir in os.listdir(users_path):
         user_path = os.path.join(users_path, user_dir)
         history_path = os.path.join(user_path, 'AppData', 'Roaming', 'Microsoft', 'Windows', 'PowerShell', 'PSReadLine', 'ConsoleHost_history.txt')
@@ -759,7 +835,7 @@ def get_startup_services(mount_path):
 
     # Registry path for services
     services_path = "ControlSet001\\Services"
-    
+
     # Load the SYSTEM hive
     try:
         reg = Registry.Registry(os.path.join(mount_path, 'Windows/System32/config/SYSTEM'))
@@ -772,7 +848,7 @@ def get_startup_services(mount_path):
     except Registry.RegistryKeyNotFoundException:
         print(f"Couldn't find the services key at {services_path}. Exiting...")
         return
-    
+
     # Open the output file to store the list of startup services
     #with open("startup_services.txt", "w") as f:
     for subkey in key.subkeys():
@@ -857,13 +933,13 @@ def get_windows_installed_roles(mount_path):
     # Parcourir les sous-clés
     for subkey in key.subkeys():
         install_state = None
-        
+
         # Parcourir les valeurs de chaque sous-clé pour trouver 'InstallState'
         for value in subkey.values():
             if value.name() == "InstallState":
                 install_state = value.value()
                 break
-        
+
         # Afficher les sous-clés dont la valeur 'InstallState' est 1
         if install_state == 1:
             print(f"Role/Feature: {subkey.name()}")
@@ -874,8 +950,8 @@ def get_windows_installed_programs(mount_path, computer_name):
         "Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
         "Microsoft\\Windows\\CurrentVersion\\Uninstall",  # Ajout de ce chemin au cas où
         "WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"
-    ]    
-    
+    ]
+
     output_file = "installed_programs.csv"
     csv_columns = ['ComputerName','DisplayName', 'DisplayVersion', 'InstallDate', 'Publisher']
 
@@ -904,7 +980,7 @@ def get_windows_installed_programs(mount_path, computer_name):
                     'InstallDate': '',
                     'Publisher': ''
                 }
-                
+
                 for value in subkey.values():
                     if value.name() == 'DisplayName':
                         program_info['DisplayName'] = value.value()
@@ -970,7 +1046,7 @@ def hayabusa_evtx(mount_path):
 def determine_platform(mount_path):
     linux_indicators = ['etc', 'var', 'usr']
     windows_indicators = ['Windows', 'Program Files', 'Users']
-    
+
     # List directories in the mount point
     try:
         dirs = os.listdir(mount_path)
@@ -990,8 +1066,9 @@ def determine_platform(mount_path):
 if len(sys.argv) > 1:
     mount_path = sys.argv[1]
     amcache_path = mount_path + "Windows/AppCompat/Programs/Amcache.hve"
-    script_path = os.path.dirname(os.path.realpath(__file__))  
+    script_path = os.path.dirname(os.path.realpath(__file__))
     normalized_mount_path = os.path.normpath(mount_path)
+    platform = determine_platform(mount_path)
     # Ne pas créer de dossier si le chemin est vide ou '/' mais continuer le script
     if os.path.isdir(mount_path):
         result_folder = os.path.basename(normalized_mount_path)
@@ -999,28 +1076,9 @@ if len(sys.argv) > 1:
         if result_folder and result_folder != '/':
             try:
                 os.makedirs(result_folder, exist_ok=True)  # Créer le dossier si possible
-                print(f"Folder {result_folder} created")
+                print(f"Result folder {script_path}/{result_folder} created")
             except OSError as e:
                 print(f"Error creating folder {result_folder}: {e}")
-        # Continuer avec la plateforme après la gestion du dossier
-        platform = determine_platform(mount_path) # Ne pas créer de dossier si le chemin est vide ou '/' mais continuer le script
-    if os.path.isdir(mount_path):
-        result_folder = os.path.basename(normalized_mount_path)
-        
-        # Si le chemin est non vide et non la racine '/'
-        if result_folder and result_folder != '/':
-            try:
-                os.makedirs(result_folder, exist_ok=True)  # Créer le dossier si possible
-                print(f"Folder {result_folder} created")
-            except OSError as e:
-                print(f"Error creating folder {result_folder}: {e}")
-        
-        # Continuer avec la plateforme après la gestion du dossier
-        platform = determine_platform(mount_path)
-
-
-
-        platform = determine_platform(mount_path)
         if platform == "Linux":
             computer_name = get_system_info(mount_path)
             #get_storage_info(mount_path)
@@ -1034,14 +1092,12 @@ if len(sys.argv) > 1:
             #create_volatility_profile(mount_path)
         elif platform == "Windows":
             computer_name = get_windows_machine_name(mount_path)
-            get_windows_info(mount_path)
-            #get_windows_installation_date(mount_path)
-            #get_windows_last_update(mount_path)
+            get_windows_info(mount_path, computer_name)
             #get_windows_storage_info(mount_path)
             #get_windows_mounted_devices(mount_path)
             #get_windows_disk_volumes(mount_path)
-            #get_windows_network_info(mount_path)
-            #get_windows_users(mount_path)
+            get_windows_network_info(mount_path, computer_name)
+            get_windows_users(mount_path, computer_name)
             #get_windows_groups(mount_path)
             #get_windows_rdp_connections(mount_path)
             #get_powershell_history(mount_path)
@@ -1062,4 +1118,3 @@ else:
 # Fermer le descripteur de fichier global après utilisation
 if original_cwd_fd is not None:
     os.close(original_cwd_fd)
-
