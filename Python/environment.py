@@ -1,14 +1,11 @@
 #!/usr/bin/python
 
 
-#. Description: Script d'analyse d'environnement à partir d'un point de montage
-#  - rajouter la liste des utilisateurs et groupes : OK
-#  - rajouter la liste d'installation des paquets et les dates : OK
-#  - apparemment, on pourrait se chrooter dans le répertoire monté pour avoir les commandes dans le contexte du système monté : OK
-#  - version du kernel => à revoir
-#  - infos réseaux => à revoir
+#. Description: Forensic Script to retrieve artefacts and write results into CSV files from a mounted img
+#. Linux and Windows will be working
 
 import platform
+import struct
 import os
 import ipaddress
 import re
@@ -736,136 +733,12 @@ def get_windows_network_info(mount_path, computer_name):
         print(f"Network information has been written into {output_file}")
     except Exception as e:
         print(f"Erreur lors de l'écriture dans le fichier CSV: {e}")
-def get_windows_users(mount_path, computer_name):
 
-    output_file = script_path + "/" + result_folder + "/" + "windows_users.csv"
-    print("[+] Retrieving users informations")
-    path_to_reg_hive = os.path.join(mount_path, 'Windows/System32/config/SAM')
-
-    try:
-        # Ouvrir la ruche SAM
-        reg = Registry.Registry(path_to_reg_hive)
-    except Registry.RegistryParseException as e:
-        print(f"Erreur lors de l'ouverture de la ruche SAM : {e}")
-
-    try:
-        # Ouvrir la clé contenant les informations des utilisateurs
-        user_key = reg.open("SAM\\Domains\\Account\\Users\\Names")
-    except Registry.RegistryKeyNotFoundException:
-        print("Couldn't find the key for users. Exiting...")
-
-    # Récupérer les utilisateurs
-    users = {}
-    for subkey in user_key.subkeys():
-        username = subkey.name()
-        # Récupérer la valeur par défaut pour obtenir le SID
-        for value in subkey.values():
-            if value.name() == "(default)":
-                users[username] = value.value()
-
-    # Récupérer les groupes et les SID correspondants
-    group_sids = {}
-    try:
-        group_key = reg.open("SAM\\Domains\\Account\\Groups")
-        for subkey in group_key.subkeys():
-            group_name = subkey.name()
-            for value in subkey.values():
-                if value.name() == "(default)":
-                    group_sids[group_name] = value.value()  # Récupérer le SID du groupe
-                    break
-    except Registry.RegistryKeyNotFoundException:
-        print("Couldn't find the key for groups. Exiting...")
-
-    # Établir l'appartenance des utilisateurs aux groupes
-    user_group_membership = {user: [] for user in users.keys()}
-
-    for group, sid in group_sids.items():
-        try:
-            # Vérifier les utilisateurs dans chaque groupe
-            group_membership_key = reg.open(f"SAM\\Domains\\Account\\Groups\\{group}\\Members")
-            for value in group_membership_key.values():
-                if value.value() in users.values():
-                    # Trouver le nom d'utilisateur correspondant au SID
-                    for username, user_sid in users.items():
-                        if user_sid == value.value():
-                            user_group_membership[username].append(group)
-        except Registry.RegistryKeyNotFoundException:
-            continue
-
-    # Écriture dans un fichier CSV
-    csv_columns = ['computer_name', 'username', 'sid', 'groups']
-
-    try:
-        with open(output_file, mode='w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=csv_columns)
-            writer.writeheader()
-            for user, sid in users.items():
-                writer.writerow({'computer_name': computer_name, 'username': user, 'sid': sid, 'groups': ', '.join(user_group_membership[user])})
-        print(f"Les informations sur les utilisateurs et leurs groupes ont été écrites dans {output_file}")
-    except Exception as e:
-        print(f"Erreur lors de l'écriture dans le fichier CSV: {e}")
-
-def get_windows_groups(mount_path, computer_name):
-    output_file = script_path + "/" + result_folder + "/" + "windows_groups.csv"
-    print("[+] Retrieving groups and their members information")
-
-    path_to_reg_hive = os.path.join(mount_path, 'Windows/System32/config/SAM')
-
-    try:
-        reg = Registry.Registry(path_to_reg_hive)
-    except Exception as e:
-        print(f"Error opening SAM hive: {e}")
-        return
-
-    try:
-        groups_key = reg.open("SAM\\Domains\\Builtin\\Aliases")
-    except Registry.RegistryKeyNotFoundException:
-        print("Couldn't find the key for groups. Exiting...")
-        return
-
-    with open(output_file, 'w') as csv_file:
-        csv_file.write("group_name,members\n")
-
-        # Parcourir les groupes
-        for group_subkey in groups_key.subkeys():
-            group_name = group_subkey.name()
-            print(f"Processing group: {group_name}")
-
-            try:
-                # Essayons d'obtenir la valeur par défaut pour le RID
-                group_rid_value = group_subkey.value("(default)")
-                if group_rid_value is not None:
-                    group_rid = group_rid_value.value()
-                    print(f"Group RID for {group_name}: {group_rid}")
-
-                    # Tenter de récupérer les membres en fonction du RID
-                    try:
-                        members_key = reg.open(f"SAM\\Domains\\Builtin\\Aliases\\{group_name}\\Members")
-                        members = []
-                        for member_subkey in members_key.subkeys():
-                            member_sid = member_subkey.name()
-                            members.append(member_sid)
-
-                        members_str = ";".join(members) if members else "None"
-                        csv_file.write(f"{group_name},{members_str}\n")
-                    except Registry.RegistryKeyNotFoundException:
-                        print(f"Couldn't find members for group {group_name}. Continuing...")
-                else:
-                    print(f"No RID found for group {group_name}. Continuing...")
-
-            except Exception as e:
-                print(f"Error processing group {group_name}: {e}")
-
-    print(f"Groups and members written to {output_file}")
-
-
-
-def get_startup_services(mount_path):
-    chaine = "Services au démarrage"
-    print(bandeau(chaine))
-
+def get_startup_services(mount_path, computer_name):
     # Registry path for services
     services_path = "ControlSet001\\Services"
+    output_file = os.path.join(script_path, result_folder, "windows_services.csv")
+    print("[+] Retrieving Windows Services information...")
 
     # Load the SYSTEM hive
     try:
@@ -881,34 +754,55 @@ def get_startup_services(mount_path):
         return
 
     # Open the output file to store the list of startup services
-    #with open("startup_services.txt", "w") as f:
-    for subkey in key.subkeys():
-        try:
-            service_name = subkey.name()
-            # Check for the "Start" value
-            start_value = subkey.value("Start").value()
-            if start_value in [0, 1, 2]:  # Boot Start, System Start, Automatic
-                start_type = ""
-                if start_value == 0:
-                    start_type = "Boot Start"
-                elif start_value == 1:
-                    start_type = "System Start"
-                elif start_value == 2:
-                    start_type = "Automatic Start"
-                print(f"Service: {service_name}, Start Type: {start_type}")
-        except Registry.RegistryValueNotFoundException:
-            # If "Start" value is not found, skip the service
-            continue
+    with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=['computer_name', 'service_name', 'start_type'])
+        writer.writeheader()
+
+        # Iterate through the service subkeys
+        for subkey in key.subkeys():
+            try:
+                service_name = subkey.name()
+                # Check for the "Start" value
+                start_value = subkey.value("Start").value()
+
+                # Determine the start type
+                if start_value in [0, 1, 2]:  # Boot Start, System Start, Automatic
+                    start_type = ""
+                    if start_value == 0:
+                        start_type = "Boot Start"
+                    elif start_value == 1:
+                        start_type = "System Start"
+                    elif start_value == 2:
+                        start_type = "Automatic Start"
+
+                    # Write the service information to the CSV
+                    writer.writerow({'computer_name': computer_name, 'service_name': service_name, 'start_type': start_type})
+            except Registry.RegistryValueNotFoundException:
+                # If "Start" value is not found, skip the service
+                continue
+
+    print(f"Windows services information has been written to {output_file}")
+
+def get_windows_users_and_groups(mount_path, computer_name):
+    path_to_sam_hive = os.path.join(mount_path, 'Windows/System32/config/SAM')
+    print("[+] Retrieving users and groups informations...")
+    sam_parser = script_path + "/samparser3.py"
+    if os.path.isfile(sam_parser):
+        print("tool is here")
+        subprocess.call(['python3', sam_parser, path_to_sam_hive])
+    else:
+        print("you have to download samparser.py here : https://raw.githubusercontent.com/yampelo/samparser/refs/heads/master/samparser.py")
+
 
 def get_windows_firewall_rules(mount_path, computer_name):
     firewall_paths = [
         "ControlSet001\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\FirewallRules",
         "CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\FirewallRules"
     ]
-    print(computer_name)
-    output_file = "firewall_rules.csv"
+    print("[+] Retrieving Firewall rules...")
+    output_file = script_path + "/" + result_folder + "/" + "firewall_rules.csv"
     # Add 'ComputerName' to the CSV columns
-    csv_columns = ['ComputerName', 'Action', 'Active', 'Dir', 'Protocol', 'Profile', 'LPort', 'RPort', 'App', 'Svc', 'Name', 'Desc', 'EmbedCtxt']
+    csv_columns = ['computer_name', 'action', 'active', 'direction', 'protocol', 'profile', 'srcport', 'dstport', 'app', 'svc', 'rule_name', 'desc', 'embedctxt']
 
     try:
         reg = Registry.Registry(os.path.join(mount_path, 'Windows/System32/config/SYSTEM'))
@@ -938,23 +832,26 @@ def get_windows_firewall_rules(mount_path, computer_name):
                         rule_dict[key] = val
 
                 # Add the computer name to the row
-                rule_dict['ComputerName'] = computer_name
+                rule_dict['computer_name'] = computer_name
 
                 # Write the row to CSV, filling missing fields with empty strings
                 writer.writerow({col: rule_dict.get(col, '') for col in csv_columns})
 
     print(f"Firewall rules written to {output_file}")
 
-def get_windows_installed_roles(mount_path):
-    chaine = "Windows Installed Roles"
-    print(bandeau(chaine))
+def get_windows_installed_roles(mount_path, computer_name):
+    #chaine = "Windows Installed Roles"
+    #print(bandeau(chaine))
     # Définir le chemin du registre
+    output_file = script_path + "/" + result_folder + "/" + "windows_roles.csv"
+    #print(f"Role/Feature: {subkey.name()}")
     path_to_reg_hive = os.path.join(mount_path, 'Windows/System32/config/SOFTWARE')
     reg = Registry.Registry(path_to_reg_hive)
+    print("[+] Retrieving Windows Roles informations...")
 
     # Définir le chemin de la clé de registre pour les rôles et fonctionnalités installés
     key_path = 'Microsoft\\ServerManager\\ServicingStorage\\ServerComponentCache'
-
+    csv_columns = ['computer_name','role_name', 'install_state']
     try:
         key = reg.open(key_path)
     except Registry.RegistryKeyNotFoundException:
@@ -962,18 +859,27 @@ def get_windows_installed_roles(mount_path):
         return
 
     # Parcourir les sous-clés
-    for subkey in key.subkeys():
-        install_state = None
+    with open(output_file, mode='a', newline='', encoding='utf-8') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
+        writer.writeheader()
+        for subkey in key.subkeys():
+            install_state = None
+            role_name = subkey.name()
 
-        # Parcourir les valeurs de chaque sous-clé pour trouver 'InstallState'
-        for value in subkey.values():
-            if value.name() == "InstallState":
-                install_state = value.value()
-                break
+            # Parcourir les valeurs de chaque sous-clé pour trouver 'InstallState'
+            for value in subkey.values():
+                if value.name() == "InstallState":
+                    install_state = value.value()
+                    break
 
-        # Afficher les sous-clés dont la valeur 'InstallState' est 1
-        if install_state == 1:
-            print(f"Role/Feature: {subkey.name()}")
+            # Afficher les sous-clés dont la valeur 'InstallState' est 1
+            #if install_state == 1:
+                #print(f"Role/Feature: {subkey.name()}")
+                #writer.writerow({'computer_name': computer_name, 'role_name': role_name, 'install_state': install_state})
+            #elif install_state != 1:
+                #print(f"Role/Feature: {subkey.name()} is {install_state}")
+            writer.writerow({'computer_name': computer_name, 'role_name': role_name, 'install_state': install_state})
+        print(f"Roles information have been written into {output_file}")
 
 def get_windows_installed_programs(mount_path, computer_name):
     installed_programs_paths = [
@@ -1027,7 +933,8 @@ def get_windows_installed_programs(mount_path, computer_name):
                     writer.writerow(program_info)
 
     print(f"Installed programs have been written into {output_file}")
-'''
+
+
 def get_windows_executed_programs(amcache_path, computer_name):
     output_file = script_path + "/" + result_folder + "/" + "executed_programs.csv"
     csv_columns = ['computer_name', 'filepath', 'executed_date']
@@ -1047,7 +954,7 @@ def get_windows_executed_programs(amcache_path, computer_name):
         print("Couldn't find the Amcache key. Exiting...")
         return
 
-    with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+    with open(output_file, mode='a', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=csv_columns)
         writer.writeheader()
 
@@ -1066,16 +973,16 @@ def get_windows_executed_programs(amcache_path, computer_name):
                         # print(f"{value.value()}")
                         if value.name() == "17":
                             win_timestamp = (value.value())
-                            print("Executed date: " + str(get_windows_timestamp(win_timestamp)))
+                            #print("Executed date: " + str(get_windows_timestamp(win_timestamp)))
                             program_info['executed_date'] = str(get_windows_timestamp(win_timestamp))
                         if value.name() == "15":
-                            print(f"Filepath : {value.value()}")
+                            #print(f"Filepath : {value.value()}")
                             program_info['filepath'] = (value.value())
+                    if program_info['filepath']:
+                        writer.writerow(program_info)
             except Registry.RegistryKeyNotFoundException as e:
                 print(f"Error accessing subkeys of {subkey.name()}: {e}")
                 continue
-            if program_info['filepath']:
-                writer.writerow(program_info)
     print(f"Executed programs have been written into {output_file}")
 '''
 def get_windows_executed_programs(amcache_path):
@@ -1109,7 +1016,7 @@ def get_windows_executed_programs(amcache_path):
                     print("Executed date: " + str(get_windows_timestamp(win_timestamp)))
                 if value.name() == "15":
                     print(f"Filepath : {value.value()}")
-
+'''
 def hayabusa_evtx(mount_path):
     hayabusa_path = script_path + "/hayabusa/hayabusa"
     print(hayabusa_path)
@@ -1181,16 +1088,14 @@ if len(sys.argv) > 1:
             #get_windows_mounted_devices(mount_path)
             #get_windows_disk_volumes(mount_path)
             get_windows_network_info(mount_path, computer_name)
-            get_windows_users(mount_path, computer_name)
-            #get_windows_groups(mount_path, computer_name) à finir !!
+            get_windows_users_and_groups(mount_path, computer_name)
             #get_windows_rdp_connections(mount_path)
             #get_powershell_history(mount_path)
-            #get_windows_services(mount_path)
-            #get_startup_services(mount_path)
-            #get_windows_firewall_rules(mount_path, computer_name)
-            #get_windows_installed_roles(mount_path)
-            #get_windows_installed_programs(mount_path, computer_name) à corriger !!
-            get_windows_executed_programs(amcache_path)
+            get_startup_services(mount_path, computer_name)
+            get_windows_firewall_rules(mount_path, computer_name)
+            get_windows_installed_roles(mount_path, computer_name)
+            get_windows_installed_programs(mount_path, computer_name)
+            get_windows_executed_programs(amcache_path, computer_name)
             #hayabusa_evtx(mount_path)
         else:
             print("Unknown OS")
