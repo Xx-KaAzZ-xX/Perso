@@ -1,8 +1,7 @@
 #!/usr/bin/python
 
 
-#. Description: Forensic Script to retrieve artefacts and write results into CSV files from a mounted img
-#. Linux and Windows will be working
+#. Description: Script d'analyse d'environnement à partir d'un point de montage
 
 import platform
 import struct
@@ -42,7 +41,7 @@ def bandeau(chaine):
 
 # Déclarer la variable globale pour le répertoire courant original
 original_cwd_fd = None
-
+'''
 # Fonction pour lancer des commandes chrootées sur un système Linux
 def chroot_and_run_command(mount_path, chroot_command):
     global original_cwd_fd
@@ -68,7 +67,15 @@ def chroot_and_run_command(mount_path, chroot_command):
     finally:
         os.fchdir(original_cwd_fd)
         os.chroot(".")
-        # Ne pas fermer original_cwd_fd ici pour qu'il soit réutilisé
+'''
+def chroot_and_run_command(mount_path, command):
+    """Exécute une commande dans un environnement chrooté."""
+    result = subprocess.run(
+        ['chroot', mount_path, 'bash', '-c', command],
+        capture_output=True, text=True
+    )
+    return result.stdout, result.stderr
+
 def get_windows_timestamp(win_timestamp):
     # Date de référence pour les timestamps Windows : 1er janvier 1601
     windows_epoch = datetime(1601, 1, 1)
@@ -84,25 +91,14 @@ def get_windows_timestamp(win_timestamp):
 
 # Fonction pour récupérer les informations système
 def get_system_info(mount_path):
-    output_csv = result_folder + "machine_info.csv"
-    print(f"le fichier d'output est : {output_csv}")
-    system_info = {
-        'computer_name': '',
-                'distro': '',
-                'installation_date': '',
-        'ntp_server': '',
-        'dns_server': '',
-        'last_update': '',
-        'last_event': ''
-    }
-
+    output_file = script_path + "/" + result_folder + "/linux_system_info.csv"
+    print("[+] Retrieving System information ...")
     try:
         # Get computer name from /etc/hostname
         hostname_file = os.path.join(mount_path, "etc/hostname")
         if os.path.exists(hostname_file):
             with open(hostname_file) as f:
                 computer_name = f.read().strip()
-                system_info['computer_name'] = computer_name
                 return computer_name
 
         # Get distribution from /etc/os-release
@@ -112,7 +108,6 @@ def get_system_info(mount_path):
                 for line in f:
                     if line.startswith("ID="):
                         distro = line.strip().split("=")[1].strip('"')
-                        system_info['distro'] = distro
                         break
          # Extraction des DNS à partir de resolv.conf
         resolv_file = os.path.join(mount_path, "etc/resolv.conf")
@@ -126,7 +121,6 @@ def get_system_info(mount_path):
          # Si vous voulez stocker tous les serveurs DNS dans une seule chaîne pour 'system_info'
             if dns_servers:
                 dns_server = ', '.join(dns_servers)  # Joindre les serveurs par des virgules
-                system_info['dns_server'] = dns_server  # Ajoute à system_info
         # Extraction du serveur NTP à partir de ntp.conf
         ntp_server = None
         if os.path.exists(ntp_file):
@@ -134,8 +128,6 @@ def get_system_info(mount_path):
                 for line in f:
                     if line.startswith('server'):
                         ntp_server = line.split()[1]
-                        system_info['ntp_server'] = ntp_server
-                        break
 
 
         # Get installation date
@@ -143,35 +135,37 @@ def get_system_info(mount_path):
         if os.path.exists(log_installation_file):
             log_installation_file_infos = os.stat(log_installation_file)
             timestamp = log_installation_file_infos.st_ctime
-            system_info['last_update'] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
+            last_update = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
         else:
             passwd_file = os.path.join(mount_path, "etc/passwd")
             if os.path.exists(passwd_file):
                 passwd_file_infos = os.stat(passwd_file)
                 timestamp = passwd_file_infos.st_ctime
-                system_info['installation_date'] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
+                installation_date = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
 
         # Get last event (this could be tailored depending on the log type)
         last_event_log = os.path.join(mount_path, "var/log/syslog")  # Example for Ubuntu/Debian
         if os.path.exists(last_event_log):
             last_log_infos = os.stat(last_event_log)
             timestamp = last_log_infos.st_mtime
-            system_info['last_event'] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
+            last_event = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
         # Output results to CSV
-        with open(output_csv, mode='w', newline='', encoding='utf-8') as csvfile:
+        with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
             fieldnames = ['computer_name', 'distro', 'installation_date', 'ntp_server', 'dns_server', 'last_update', 'last_event']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
-            writer.writerow(system_info)
+            #writer.writerow(system_info)
+            writer.writerow({'computer_name': computer_name, 'distro': distro, 'installation_date': installation_date, 'ntp_server': ntp_server, 'dns_server': dns_server, 'last_update': last_update, 'last_event': last_event})
 
-        print(f"System information written to {output_csv}")
+        print(f"System information have been written to {output_file}")
 
     except Exception as e:
         print("An error occurred while gathering system information:", e)
 
 def get_network_info(mount_path, computer_name):
-    output_csv = "network_info.csv"
 
+    output_file = script_path + "/" + result_folder + "/linux_network_info.csv"
+    print("[+] Retrieving Network information...")
     # Chemins potentiels pour les fichiers de configuration réseau
     interfaces_file = os.path.join(mount_path, "etc/network/interfaces")
     netplan_dir = os.path.join(mount_path, "etc/netplan/")
@@ -179,7 +173,7 @@ def get_network_info(mount_path, computer_name):
 
         # Préparation pour l'écriture dans le fichier CSV
     csv_columns = ['computer_name', 'interface', 'ip_address', 'netmask', 'gateway']
-    with open(output_csv, mode='w', newline='', encoding='utf-8') as csvfile:
+    with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
         writer.writeheader()
 
@@ -198,8 +192,7 @@ def get_network_info(mount_path, computer_name):
                     if 'gateway' in line:
                         gateway = line.split()[1]
                 if iface:
-                    #writer.writerow({'computer_name': computer_name, 'interface': iface, 'ip_address': ip, 'netmask': netmask, 'gateway': gateway})
-                    writer.writerow(network_info)
+                    writer.writerow({'computer_name': computer_name, 'ip_address': ip, 'netmask': netmask, 'gateway' : gateway})
 
         # Extraction des informations pour RedHat (ifcfg)
         if os.path.exists(redhat_ifcfg_dir):
@@ -242,7 +235,7 @@ def get_network_info(mount_path, computer_name):
                                              gateway = route['via']
 
                          writer.writerow({'computer_name': computer_name, 'interface': iface, 'ip_address': ip, 'netmask': netmask, 'gateway': gateway})
-        print(f"Network information extracted and written to {output_csv}")
+        print(f"Network information has been written to {output_file}")
 
 
 # Fonction pour récupérer les informations de stockage
@@ -440,78 +433,50 @@ def list_installed_apps(mount_path):
         else:
             print("Distribution inconnue")
 
-def list_services(mount_path):
-    chaine = "Liste des services sur la machine"
-    print(bandeau(chaine))
-    init_path = mount_path + "/usr/sbin/init"
+
+def list_services(mount_path, computer_name):
+    output_file = os.path.join(script_path, result_folder, "linux_services.csv")
+    init_path = os.path.join(mount_path, "usr/sbin/init")
+
     if os.path.exists(init_path):
         init_sys = os.path.basename(os.readlink(init_path))
+
         if init_sys == "systemd":
             chroot_command = "systemctl list-unit-files --type=service"
-            chroot_and_run_command(mount_path, chroot_command)
+            stdout, stderr = chroot_and_run_command(mount_path, chroot_command)
+
+            if stderr:
+                print(f"Erreur: {stderr}")
+                return
+
+            # Traitement de la sortie
+            services = []
+            for line in stdout.splitlines()[1:]:  # Ignorer l'en-tête
+                parts = line.split()
+                if len(parts) == 3:  # service_name, status, status_at_boot
+                    service_name = parts[0]
+                    status = parts[1]
+                    # Le statut au démarrage est généralement indiqué par la troisième colonne,
+                    # si présente, sinon mettre une valeur par défaut ou gérer les erreurs.
+                    status_at_boot = parts[2] if len(parts) > 2 else "unknown"
+                    services.append((service_name, status, status_at_boot))
+
+            # Écrire dans le fichier CSV
+            with open(output_file, mode='w', newline='') as csvfile:
+                csv_writer = csv.writer(csvfile)
+                csv_writer.writerow([computer_name, 'service_name', 'status', 'status_at_boot'])  # En-tête
+                csv_writer.writerows(services)
+
+            print(f"Les informations des services ont été écrites dans {output_file}.")
         else:
-            # Afficher la sortie d'erreur de la commande
-            #print(f"Erreur: {result.stderr}")
-                print("Not managed by Systemd")
+            print("Not managed by Systemd")
     else:
         print("System is not managed by Systemd")
+
 def get_firewall_rules(mount_path):
     print(bandeau("Firewall Rules Linux"))
     chroot_command = "iptables -L"
     chroot_and_run_command(mount_path, chroot_command)
-
-def create_volatility_profile(mount_path):
-    create_profile = input("Voulez-vous créer un profil Volatility ? (oui/non) ").strip().lower()
-    if create_profile == 'non':
-        print("Opération annulée.")
-    elif create_profile == 'oui':
-        volatility_dir = input("Veuillez entrer le répertoire de Volatility: ").strip()
-        # Trouver la version du noyau
-        lib_modules_path = os.path.join(mount_path, 'lib/modules')
-        versions = os.listdir(lib_modules_path)
-        if len(versions) == 0:
-            print(f"Aucune version de noyau trouvée dans {mount_path}lib/modules.")
-            sys.exit(1)
-
-        # Utiliser la première version trouvée (ou ajouter une logique pour choisir la bonne version)
-        kernel_version = versions[0]
-        print(f"Version de noyau trouvée: {kernel_version}")
-
-        # Mettre à jour les variables d'environnement pour le Makefile
-        os.environ['KDIR'] = mount_path
-        os.environ['KVER'] = kernel_version
-        os.environ['PWD'] = os.path.join(volatility_dir, 'tools/linux')
-
-        # Chemin vers le répertoire contenant le Makefile de Volatility
-        makefile_dir = os.path.join(volatility_dir, 'tools/linux')
-        build_path = mount_path + "lib/modules"
-        # Exécuter le make dans le répertoire contenant le Makefile
-        try:
-            subprocess.run(['make', '-C', makefile_dir, 'dwarf'], check=True)
-        except subprocess.CalledProcessError as e:
-            print(f"Erreur lors de la création du profil : {e}")
-            sys.exit(1)
-
-        print("Fichier dwarf généré avec succès.")
-
-        # Générer le fichier zip contenant le module dwarf et System.map
-        dwarf_file = os.path.join(makefile_dir, 'module.dwarf')
-        system_map_file = os.path.join(mount_path, 'boot', f'System.map-{kernel_version}')
-        output_zip = os.path.join(volatility_dir, f'{kernel_version}_profile.zip')
-
-        if not os.path.exists(dwarf_file):
-            print(f"Le fichier {dwarf_file} n'existe pas.")
-            sys.exit(1)
-
-        if not os.path.exists(system_map_file):
-            print(f"Le fichier {system_map_file} n'existe pas.")
-            sys.exit(1)
-
-        with zipfile.ZipFile(output_zip, 'w') as zipf:
-            zipf.write(dwarf_file, 'module.dwarf')
-            zipf.write(system_map_file, f'System.map-{kernel_version}')
-
-        print(f"Profil Volatility créé avec succès: {output_zip}")
 
 def get_windows_machine_name(mount_path):
     #chaine = "Informations du système Windows"
@@ -521,8 +486,8 @@ def get_windows_machine_name(mount_path):
     try:
         key = reg.open("ControlSet001\\Control\\ComputerName\\ComputerName")
     except Registry.RegistryKeyNotFoundException:
-        print("Couldn't find Run key. Exiting...")
-        sys.exit(-1)
+        print("Couldn't find Computer Name. Script terminated.")
+        sys.exit(1)
 
     for value in [v for v in key.values() \
                        if v.value_type() == Registry.RegSZ or \
@@ -789,7 +754,7 @@ def get_windows_users_and_groups(mount_path, computer_name):
     sam_parser = script_path + "/samparser3.py"
     if os.path.isfile(sam_parser):
         print("tool is here")
-        subprocess.call(['python3', sam_parser, path_to_sam_hive])
+        #subprocess.call(['python3', sam_parser, path_to_sam_hive])
     else:
         print("you have to download samparser.py here : https://raw.githubusercontent.com/yampelo/samparser/refs/heads/master/samparser.py")
 
@@ -1078,7 +1043,7 @@ if len(sys.argv) > 1:
             #get_groups(mount_path)
             #list_installed_apps(mount_path)
             #list_connections(mount_path)
-            #list_services(mount_path)
+            list_services(mount_path, computer_name)
             #get_firewall_rules(mount_path)
             #create_volatility_profile(mount_path)
         elif platform == "Windows":
