@@ -10,6 +10,7 @@ import ipaddress
 import re
 import time
 import yaml
+import gzip
 import subprocess
 #from tabulate import tabulate
 from datetime import datetime, timedelta
@@ -99,7 +100,7 @@ def get_system_info(mount_path):
         if os.path.exists(hostname_file):
             with open(hostname_file) as f:
                 computer_name = f.read().strip()
-                return computer_name
+                #return computer_name
 
         # Get distribution from /etc/os-release
         distro_file = os.path.join(mount_path, "etc/os-release")
@@ -108,7 +109,7 @@ def get_system_info(mount_path):
                 for line in f:
                     if line.startswith("ID="):
                         distro = line.strip().split("=")[1].strip('"')
-                        break
+                        #break
          # Extraction des DNS à partir de resolv.conf
         resolv_file = os.path.join(mount_path, "etc/resolv.conf")
         ntp_file = os.path.join(mount_path, "etc/ntp.conf")
@@ -149,7 +150,43 @@ def get_system_info(mount_path):
             last_log_infos = os.stat(last_event_log)
             timestamp = last_log_infos.st_mtime
             last_event = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
-        # Output results to CSV
+
+        last_update_file = ""
+        if distro in ["debian", "ubuntu", "kali"]:
+            log_path = os.path.join(mount_path, "var/log/apt/history.log")
+
+            if not os.path.exists(log_path):
+                print(f"Log file for updates not found for {distro}.")
+                return None
+
+            last_update = None
+
+            with open(log_path, "r") as log_file:
+                for line in log_file:
+                    if "Start-Date" in line:
+                        # Extract the date
+                        date_str = line.split("Start-Date: ")[-1].strip()
+                        # Parse the date to datetime object
+                        last_update = datetime.strptime(date_str, "%Y-%m-%d  %H:%M:%S")
+
+        elif distro in ["rhel", "centos", "fedora", "almalinux"]:
+              log_path = os.path.join(mount_path, "var/log/yum.log")
+
+              if not os.path.exists(log_path):
+                  print(f"Log file for updates not found for {distro}.")
+                  return None
+
+              last_update = None
+
+              with open(log_path, "r") as log_file:
+                  for line in log_file:
+                      if "Updated" in line:
+                          # Extract the date (example format: 'Jan 01 12:34:56')
+                          date_str = line[:15].strip()
+                          # Parse the date to datetime object
+                          last_update = datetime.strptime(date_str, "%b %d %H:%M:%S")
+
+       # Output results to CSV
         with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
             fieldnames = ['computer_name', 'distro', 'installation_date', 'ntp_server', 'dns_server', 'last_update', 'last_event']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -158,6 +195,8 @@ def get_system_info(mount_path):
             writer.writerow({'computer_name': computer_name, 'distro': distro, 'installation_date': installation_date, 'ntp_server': ntp_server, 'dns_server': dns_server, 'last_update': last_update, 'last_event': last_event})
 
         print(f"System information have been written to {output_file}")
+
+        return computer_name
 
     except Exception as e:
         print("An error occurred while gathering system information:", e)
@@ -173,6 +212,7 @@ def get_network_info(mount_path, computer_name):
 
         # Préparation pour l'écriture dans le fichier CSV
     csv_columns = ['computer_name', 'interface', 'ip_address', 'netmask', 'gateway']
+    iface, ip, netmask, gateway = None, None, None, None
     with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
         writer.writeheader()
@@ -180,7 +220,7 @@ def get_network_info(mount_path, computer_name):
         # Extraction des informations des interfaces
         if os.path.exists(interfaces_file):
             with open(interfaces_file) as f:
-                iface, ip, netmask, gateway = None, None, None, None
+                #iface, ip, netmask, gateway = None, None, None, None
                 for line in f:
                     line = line.strip()
                     if line.startswith('iface'):
@@ -251,7 +291,7 @@ def get_storage_info(mount_path):
     print(disk_usage)
 
 def get_users_and_groups(mount_path, computer_name):
-    output_file = script_path + "/" + result_folder + "/" + "users_and_groups.csv"
+    output_file = script_path + "/" + result_folder + "/" + "linux_users_and_groups.csv"
     users = []
     groups = []
     print("[+] Retrieving users & groups informations")
@@ -310,133 +350,168 @@ def get_users_and_groups(mount_path, computer_name):
 
     print(f"Users and groups information written to {output_file}")
 
-def list_connections(mount_path):
-    chaine = "Liste des connexions"
-    print(bandeau(chaine))
+def list_connections(mount_path, computer_name):
+    output_file = script_path + "/" + result_folder + "/" + "linux_connections.csv"
+    print("[+] Retrieving connection information...")
 
-    # Chemin vers les fichiers de log de connexion
-    log_files_path = os.path.join(mount_path, "var/log")
+    csv_columns = ['computer_name', 'connection_date', 'user', 'scr_ip']
 
-    # Vérifier que le répertoire des fichiers de log existe
-    if not os.path.isdir(log_files_path):
-        print("Le répertoire des fichiers de log n'existe pas.")
-        return
+    # Ouvrir le fichier CSV pour écrire les informations
+    with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
+        writer.writeheader()
+        counter = 0
+        # Chemin vers les fichiers de log de connexion
+        log_files_path = os.path.join(mount_path, "var/log")
 
-    # Récupérer les fichiers de log de connexion
-    log_files = os.listdir(log_files_path)
+        if not os.path.isdir(log_files_path):
+            print("Log folder doesn't exist.")
+            return
 
-    # Parcourir les fichiers de log pour récupérer les adresses IP
-    for log_file in log_files:
-        log_file_path = os.path.join(log_files_path, log_file)
+        log_files = os.listdir(log_files_path)
 
+        # Parcourir les fichiers de log pour récupérer les adresses IP
+        for log_file in log_files:
+            log_file_path = os.path.join(log_files_path, log_file)
 
-        # Traitement des fichiers auth.log
-        if "auth.log" in log_file:
-            with open(log_file_path, encoding='ISO-8859-1') as file:
-                log_content = file.read()
-                for line in log_content.split("\n"):
-                    if "sshd" in line and "Accepted" in line:
-                        chaine = "Liste des connexions réussies depuis le auth.log"
-                        print(bandeau(chaine))
-                        print(line)
-        if "secure*" in log_file:
-            with open(log_file_path, encoding='ISO-8859-1') as file:
-                log_content = file.read()
-                for line in log_content.split("\n"):
-                    if "sshd" in line and "Accepted" in line:
-                        chaine = "Liste des connexions réussies depuis le auth.log"
-                        print(bandeau(chaine))
-                        print(line)
-        # Traitement des fichiers wtmp
-        if "wtmp" in log_file:
-            chaine = "Liste des connexions réussies depuis le wtmp:"
-            print(bandeau(chaine))
-            last_cmd = f"last -f {log_file_path} -F"
-            result_last = subprocess.run(last_cmd, shell=True, capture_output=True, text=True)
-            print(result_last.stdout)
+            # Traitement des fichiers auth.log ou secure.log
+            if "auth.log" in log_file or "secure" in log_file:
+                file_stat = os.stat(log_file_path)
+                file_creation_year = time.localtime(file_stat.st_ctime).tm_year
+                with open(log_file_path, encoding='ISO-8859-1') as file:
+                    log_content = file.read()
+                    for line in log_content.split("\n"):
+                        if "sshd" in line and "Accepted" in line:
+                            parts = line.split()
+                            connection_date = " ".join(parts[0:3])  # Date de connexion
+                            connection_date_with_year = f"{connection_date} {file_creation_year}"
+                            user = parts[8]  # Utilisateur
+                            scr_ip = parts[10]  # IP source
+                            counter += 1
+                            writer.writerow({'computer_name': computer_name, 'connection_date': connection_date_with_year, 'user': user, 'scr_ip': scr_ip})
+                                       # Traitement des fichiers wtmp (via la commande last)
+            if "wtmp" in log_file:
+                last_cmd = f"last -F -f {log_file_path}"
+                result_last = subprocess.run(last_cmd, shell=True, capture_output=True, text=True)
 
-        # Vérification de l'existence du dossier audit
-        if "audit" in log_file and os.path.isdir(os.path.join(log_files_path, "audit")):
+                for line in result_last.stdout.splitlines():
+                    parts = line.split()
+                    if len(parts) >= 10:
+                        connection_date = " ".join(parts[4:8])  # Date de connexion
+                        user = parts[0]  # Utilisateur
+                        if user == "reboot":
+                            #print("belek")
+                            continue
+                        src_ip = parts[2]
+                        #scr_ip = parts[-1] if parts[-1] != "::" else "local"  # IP source ou local
+                        counter += 1
+                        writer.writerow({'computer_name': computer_name, 'connection_date': connection_date, 'user': user, 'scr_ip': scr_ip})
+
+            # Vérification de l'existence du dossier audit et recherche des fichiers audit.log
             audit_dir = os.path.join(log_files_path, "audit")
-            audit_files = os.listdir(audit_dir)
+            if os.path.isdir(audit_dir):
+                audit_files = os.listdir(audit_dir)
 
-            print(bandeau("Recherche des connexions réussies dans les fichiers audit.log"))
+                for audit_file in audit_files:
+                    if "audit.log" in audit_file:
+                        audit_file_path = os.path.join(audit_dir, audit_file)
+                        zgrep_cmd = f"zgrep 'USER_LOGIN' {audit_file_path} | grep 'success'"
+                        result_zgrep = subprocess.run(zgrep_cmd, shell=True, capture_output=True, text=True)
 
-            for audit_file in audit_files:
-                if "audit.log" in audit_file:
-                    audit_file_path = os.path.join(audit_dir, audit_file)
+                        for line in result_zgrep.stdout.splitlines():
+                            parts = line.split()
+                            if "success" in parts:
+                                connection_date = parts[0] + " " + parts[1]  # Date de connexion
+                                user = parts[-4]  # Utilisateur
+                                scr_ip = parts[-1]  # IP source
+                                counter += 1
+                                writer.writerow({'computer_name': computer_name, 'connection_date': connection_date, 'user': user, 'scr_ip': scr_ip})
+    if counter >= 1:
+        print(f"Connections informations have been written into {output_file}")
+    else:
+        print(f"No connections has been found, {output_file} is empty")
 
-                    # Exécuter zgrep pour trouver les occurrences de "success" dans les fichiers audit.log
-                    zgrep_cmd = f"zgrep 'USER_LOGIN' {audit_file_path} | grep 'success'"
-                    result_zgrep = subprocess.run(zgrep_cmd, shell=True, capture_output=True, text=True)
 
-                    # Afficher les lignes qui correspondent
-                    if result_zgrep.stdout:
-                        print(f"Lignes trouvées dans {audit_file_path} :\n{result_zgrep.stdout}")
-                    else:
-                        print(f"Aucune correspondance trouvée dans {audit_file_path}")
-
-def list_installed_apps(mount_path):
+def list_installed_apps(mount_path, computer_name):
     distro_file = mount_path + "/etc/os-release"
-    chaine = "Liste des applications installées"
-    print(bandeau(chaine))
+    output_file = script_path + result_folder + "/linux_installed_apps.csv"
+    print("[+] Retrieving installed apps...")
 
-    if os.path.exists(distro_file):
-        with open(distro_file) as f:
-            for line in f:
-                if line.startswith("ID="):
-                    distro = line.strip().split("=")[1].strip('"')
-                    #print(distro)
-                    break
-        if distro in ["debian", "ubuntu"]:
-            chroot_command = "zgrep 'install ' /var/log/dpkg.log* | sort | cut -f1,2,4 -d' '"
-            chroot_command2 = "apt list --installed"
-            chroot_and_run_command(mount_path, chroot_command)
-            chroot_and_run_command(mount_path, chroot_command2)
-        elif distro in ["rhel", "centos", "fedora", "almalinux"]:
-            # Exécutez la première commande
-            chroot_command = "rpm -qa --queryformat '%{installtime:date} %{name}-%{version}-%{release}\n' | sort"
-            result = chroot_and_run_command(mount_path, chroot_command)
+    with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
+        fieldnames = ['computer_name', 'package_name', 'install_date']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
 
-            # Vérifiez si la sortie est vide
-            if result:
-                print(result)
-            else:
-                print("Aucun paquet trouvé, tentative de récupération des logs yum ou dnf.")
+        if os.path.exists(distro_file):
+            with open(distro_file) as f:
+                for line in f:
+                    if line.startswith("ID="):
+                        distro = line.strip().split("=")[1].strip('"')
+                        break
 
-                # Lister tous les fichiers yum.log* dans /var/log
-                yum_log_path = os.path.join(mount_path, "var/log/yum.log*")
-                yum_log_files = glob.glob(yum_log_path)  # Récupère tous les fichiers correspondants
+            # Pour Debian/Ubuntu
+            if distro in ["debian", "ubuntu", "kali"]:
+                chroot_command = "zgrep 'install ' /var/log/dpkg.log* | sort | cut -f1,2,4 -d' '"
+                result, _ = chroot_and_run_command(mount_path, chroot_command)
 
-                if yum_log_files:
-                    for log_file in yum_log_files:
-                        # Déterminer si le fichier est compressé
-                        if log_file.endswith(".gz"):
-                            with gzip.open(log_file, 'rt', encoding='utf-8') as f:
-                                result_logs = f.read()
-                                if result_logs:
-                                    print(f"Contenu du fichier {log_file}:")
-                                    print(result_logs)
-                                else:
-                                    print(f"Aucun contenu trouvé dans le fichier {log_file}.")
+                if result:
+                    for line in result.splitlines():
+                        parts = line.split()
+                        if len(parts) == 3:
+                            install_date = parts[0] + " " + parts[1]
+                            package_name = parts[2]
+                            writer.writerow({'computer_name' : computer_name, 'package_name': package_name, 'install_date': install_date})
 
-                        else:
-                            with open(log_file, 'r', encoding='utf-8') as f:
-                                result_logs = f.read()
-                                if result_logs:
-                                    print(f"Contenu du fichier {log_file}:")
-                                    print(result_logs)
-                                else:
-                                    print(f"Aucun contenu trouvé dans le fichier {log_file}.")
+            # Pour RHEL/CentOS/Fedora/AlmaLinux
+            elif distro in ["rhel", "centos", "fedora", "almalinux"]:
+                chroot_command = "rpm -qa --queryformat '%{installtime:date} %{name}-%{version}-%{release}\n' | sort"
+                result, _ = chroot_and_run_command(mount_path, chroot_command)
+
+                if result:
+                    for line in result.splitlines():
+                        parts = line.split()
+                        if len(parts) > 1:
+                            install_date = " ".join(parts[:3])
+                            package_name = parts[3]
+                            writer.writerow({'computer_name' : computer_name, 'package_name': package_name, 'install_date': install_date})
                 else:
-                    print("Aucun fichier yum.log n'a été trouvé.")
+                    print("No RPM packages found, checking yum logs.")
+
+                    # Lister les logs yum pour récupérer les infos d'installation
+                    yum_log_path = os.path.join(mount_path, "var/log/yum.log*")
+                    yum_log_files = glob.glob(yum_log_path)
+
+                    if yum_log_files:
+                        for log_file in yum_log_files:
+                            if log_file.endswith(".gz"):
+                                with gzip.open(log_file, 'rt', encoding='utf-8') as f:
+                                    result_logs = f.read()
+                                    for line in result_logs.splitlines():
+                                        if "Updated" in line or "Installed" in line:
+                                            parts = line.split()
+                                            install_date = " ".join(parts[:3])
+                                            package_name = parts[-1]
+                                            writer.writerow({'computer_name' : computer_name, 'package_name': package_name, 'install_date': install_date})
+                            else:
+                                with open(log_file, 'r', encoding='utf-8') as f:
+                                    result_logs = f.read()
+                                    for line in result_logs.splitlines():
+                                        if "Updated" in line or "Installed" in line:
+                                            parts = line.split()
+                                            install_date = " ".join(parts[:3])
+                                            package_name = parts[-1]
+                                            writer.writerow({'computer_name' : computer_name, 'package_name': package_name, 'install_date': install_date})
+                    else:
+                        print("No yum logs found.")
+            print(f"Linux installed apps informations have been written into {output_file}")
         else:
-            print("Distribution inconnue")
+            print("Unknown distribution")
 
 
 def list_services(mount_path, computer_name):
     output_file = os.path.join(script_path, result_folder, "linux_services.csv")
     init_path = os.path.join(mount_path, "usr/sbin/init")
+    print("[+] Retrieving Services informations...")
 
     if os.path.exists(init_path):
         init_sys = os.path.basename(os.readlink(init_path))
@@ -453,30 +528,88 @@ def list_services(mount_path, computer_name):
             services = []
             for line in stdout.splitlines()[1:]:  # Ignorer l'en-tête
                 parts = line.split()
-                if len(parts) == 3:  # service_name, status, status_at_boot
+                if len(parts) == 3:  # service_name, 8tatus, status_at_boot
                     service_name = parts[0]
                     status = parts[1]
                     # Le statut au démarrage est généralement indiqué par la troisième colonne,
                     # si présente, sinon mettre une valeur par défaut ou gérer les erreurs.
                     status_at_boot = parts[2] if len(parts) > 2 else "unknown"
-                    services.append((service_name, status, status_at_boot))
+                    services.append((computer_name, service_name, status, status_at_boot))
 
             # Écrire dans le fichier CSV
             with open(output_file, mode='w', newline='') as csvfile:
                 csv_writer = csv.writer(csvfile)
-                csv_writer.writerow([computer_name, 'service_name', 'status', 'status_at_boot'])  # En-tête
+                csv_writer.writerow(['computer_name', 'service_name', 'status', 'status_at_boot'])  # En-tête
                 csv_writer.writerows(services)
 
-            print(f"Les informations des services ont été écrites dans {output_file}.")
+            print(f"Services informations has been written into {output_file}.")
         else:
             print("Not managed by Systemd")
     else:
         print("System is not managed by Systemd")
 
-def get_firewall_rules(mount_path):
-    print(bandeau("Firewall Rules Linux"))
-    chroot_command = "iptables -L"
-    chroot_and_run_command(mount_path, chroot_command)
+
+def get_firewall_rules(mount_path, computer_name):
+    output_file = os.path.join(script_path, result_folder, "linux_firewall.csv")
+    csv_columns = ['computer_name', 'chain', 'policy', 'target', 'prot', 'source', 'lport', 'destination', 'rport']
+    print("[+] Retrieving Firewall Rules...")
+
+    with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
+        writer.writeheader()
+
+        # Exécuter la commande iptables dans l'environnement chrooté
+        iptables_command = "iptables -L"
+        stdout, stderr = chroot_and_run_command(mount_path, iptables_command)
+
+        if stderr:
+            print(f"Error running iptables command: {stderr}")
+            return
+
+        current_chain = None
+        current_policy = None
+
+        # Parcourir les lignes de la sortie iptables
+        for line in stdout.splitlines():
+            parts = line.split()
+
+            if len(parts) == 0:
+                continue
+
+            # Détection des chaînes (Chain INPUT, FORWARD, OUTPUT, etc.)
+            if line.startswith("Chain"):
+                current_chain = parts[1]  # Nom de la chaîne (ex: INPUT, FORWARD, OUTPUT)
+                current_policy = parts[3]  # Politique (policy) par défaut (ex: ACCEPT, DROP)
+            elif len(parts) >= 7:  # Ignorer les lignes avec les compteurs
+                # Extraction des informations de règle
+                target = parts[0]  # Target (ACCEPT, DROP, etc.)
+                prot = parts[1]  # Protocole (tcp, udp, all)
+                source = parts[3]  # Adresse source
+                destination = parts[4]  # Adresse destination
+
+                # Détection des ports locaux et distants si spécifiés
+                lport = rport = "-"
+                if "dpt:" in line or "spt:" in line:
+                    for part in parts:
+                        if "dpt:" in part:  # Port destination
+                            lport = part.split(":")[1]
+                        if "spt:" in part:  # Port source
+                            rport = part.split(":")[1]
+
+                # Écriture des données dans le fichier CSV
+                writer.writerow({
+                    'computer_name': computer_name,
+                    'chain': current_chain,
+                    'policy': current_policy,
+                    'target': target,
+                    'prot': prot,
+                    'source': source,
+                    'lport': lport,
+                    'destination': destination,
+                    'rport': rport
+                })
+
+        print(f"Firewall rules have been written into {output_file}")
 
 def get_windows_machine_name(mount_path):
     #chaine = "Informations du système Windows"
@@ -1041,10 +1174,10 @@ if len(sys.argv) > 1:
             get_network_info(mount_path, computer_name)
             get_users_and_groups(mount_path, computer_name)
             #get_groups(mount_path)
-            #list_installed_apps(mount_path)
-            #list_connections(mount_path)
+            list_installed_apps(mount_path, computer_name)
+            list_connections(mount_path, computer_name)
             list_services(mount_path, computer_name)
-            #get_firewall_rules(mount_path)
+            get_firewall_rules(mount_path, computer_name)
             #create_volatility_profile(mount_path)
         elif platform == "Windows":
             computer_name = get_windows_machine_name(mount_path)
