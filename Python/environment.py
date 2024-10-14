@@ -12,7 +12,7 @@ import time
 import yaml
 import gzip
 import subprocess
-#from tabulate import tabulate
+from collections import OrderedDict
 from datetime import datetime, timedelta
 import sys
 from pathlib import Path
@@ -881,16 +881,84 @@ def get_startup_services(mount_path, computer_name):
 
     print(f"Windows services information has been written to {output_file}")
 
-def get_windows_users_and_groups(mount_path, computer_name):
-    path_to_sam_hive = os.path.join(mount_path, 'Windows/System32/config/SAM')
-    print("[+] Retrieving users and groups informations...")
-    sam_parser = script_path + "/samparser3.py"
-    if os.path.isfile(sam_parser):
-        print("tool is here")
-        #subprocess.call(['python3', sam_parser, path_to_sam_hive])
-    else:
-        print("you have to download samparser.py here : https://raw.githubusercontent.com/yampelo/samparser/refs/heads/master/samparser.py")
 
+def binary_to_sid(binary_data):
+    if len(binary_data) < 12:
+        return ''
+    rev = struct.unpack("<B", binary_data[0:1])[0]
+    authid = ''.join(format(x, '02x') for x in binary_data[2:8]).lstrip('0')
+    if len(binary_data) == 12:
+        sub = struct.unpack("<L", binary_data[8:12])[0]
+        return "S-" + str(rev) + "-" + str(authid) + "-" + str(sub)
+    else:
+        sub = struct.unpack("<LLLL", binary_data[8:24])
+        rid = struct.unpack("<L", binary_data[24:28])[0]
+        return "S-" + str(rev) + "-" + str(authid) + "-" + '-'.join(map(str, sub)) + "-" + str(rid)
+
+def get_windows_users_and_groups(mount_path, computer_name):
+    print("[+] Retrieving users and groups informations...")
+    try:
+        results = OrderedDict()
+        sam = Registry.Registry(os.path.join(mount_path, 'Windows/System32/config/SAM'))
+
+        # Extraction du domaine Identifier
+        domain_key = sam.open("SAM\\Domains\\Account")
+        f_value = domain_key.value("F").value()  # Ajustez si nécessaire
+        domain_identifier = struct.unpack("<LLLL", f_value[0x24:0x34])  # 0x24 à 0x34
+        domain_identifier = [str(i & 0xFFFFFFFF) for i in domain_identifier]  # & 0xFFFFFFFF pour assurer l'interprétation non signée
+        domain_sid = "S-1-5-" + "-".join(map(str, domain_identifier))
+        print(domain_sid)
+
+
+        #Extract username
+        users_root = sam.open("SAM\\Domains\\Account\\Users")
+        for user_key in users_root.subkeys():
+            if user_key.name() == "Names":  # Ignore the "Names" key
+                continue
+            rid = int(user_key.name(), 16)
+            v_value = user_key.value("V").value()
+
+            username_ofst = struct.unpack("<L", v_value[12:16])[0]
+            username_lngth = struct.unpack("<L", v_value[16:20])[0]
+            username = v_value[(username_ofst + 0xCC):(username_ofst + 0xCC + username_lngth)].decode('utf-16-le').replace('\x00','')
+            #print(username)
+
+            # Construire le SID de l'utilisateur, il s'agit du domain identifier + RID
+            ## il est faux pour l'instant
+            user_sid = f"{domain_sid}-{rid}"
+
+            results[username] = {'Username' : username, 'RID': rid, 'SID': user_sid}
+        print(results)
+
+        # Extraction des groupes et des membres
+        groups_root = sam.open("SAM\\Domains\\Builtin\\Aliases")
+        for group_key in groups_root.subkeys():
+            if group_key.name().startswith("00000"):
+                c_value = group_key.value("C").value()
+                users_offset = struct.unpack("<L", c_value[40:44])[0]
+                user_count = struct.unpack("<L", c_value[48:52])[0]
+                group_name_ofst = struct.unpack("<L", c_value[16:20])[0]
+                group_name_lngth = struct.unpack("<L", c_value[20:24])[0]
+                group_name = c_value[(group_name_ofst + 52):(group_name_ofst + 52 + group_name_lngth)].decode('utf-16-le').replace('\x00', '')
+
+                # Extraire l'offset de la liste des membres
+                members_offset = struct.unpack("<L", c_value[12:16])[0]
+                # Extraire la longueur de la liste des membres
+                members_length = struct.unpack("<L", c_value[16:20])[0]
+                # Liste des membres à partir de l'offset calculé
+
+                print(f"{user_count} users in {group_name} ")
+                members = []
+                for i in range(user_count):
+                    member_data = c_value[users_offset + i * 4: users_offset + (i + 1) * 4]
+                    rid = struct.unpack("<L", member_data)[0]
+                    print(rid)
+                    members.append(rid)
+                print(members)
+
+
+    except Exception as e:
+        print(f"Error: {e}")
 
 def get_windows_firewall_rules(mount_path, computer_name):
     firewall_paths = [
@@ -938,8 +1006,6 @@ def get_windows_firewall_rules(mount_path, computer_name):
     print(f"Firewall rules written to {output_file}")
 
 def get_windows_installed_roles(mount_path, computer_name):
-    #chaine = "Windows Installed Roles"
-    #print(bandeau(chaine))
     # Définir le chemin du registre
     output_file = script_path + "/" + result_folder + "/" + "windows_roles.csv"
     #print(f"Role/Feature: {subkey.name()}")
@@ -1190,10 +1256,10 @@ if len(sys.argv) > 1:
             #get_windows_rdp_connections(mount_path)
             #get_powershell_history(mount_path)
             get_startup_services(mount_path, computer_name)
-            get_windows_firewall_rules(mount_path, computer_name)
-            get_windows_installed_roles(mount_path, computer_name)
-            get_windows_installed_programs(mount_path, computer_name)
-            get_windows_executed_programs(amcache_path, computer_name)
+            #get_windows_firewall_rules(mount_path, computer_name)
+            #get_windows_installed_roles(mount_path, computer_name)
+            #get_windows_installed_programs(mount_path, computer_name)
+            #get_windows_executed_programs(amcache_path, computer_name)
             #hayabusa_evtx(mount_path)
         else:
             print("Unknown OS")
