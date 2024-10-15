@@ -513,66 +513,81 @@ def list_services(mount_path, computer_name):
 
 
 def get_firewall_rules(mount_path, computer_name):
-    output_file = os.path.join(script_path, result_folder, "linux_firewall.csv")
-    csv_columns = ['computer_name', 'chain', 'policy', 'target', 'prot', 'source', 'lport', 'destination', 'rport']
+    output_file = os.path.join(script_path, result_folder, "linux_firewall_rules.csv")
+    csv_columns = ['computer_name', 'chain', 'target', 'prot', 'source', 'destination', 'port']
     print("[+] Retrieving Firewall Rules...")
 
-    with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
-        writer.writeheader()
+    try:
+        with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
+            writer.writeheader()
 
-        # Exécuter la commande iptables dans l'environnement chrooté
-        iptables_command = "iptables -L"
-        stdout, stderr = chroot_and_run_command(mount_path, iptables_command)
+            # Exécuter la commande iptables dans l'environnement chrooté
+            iptables_command = "iptables -L -n"
+            stdout, stderr = chroot_and_run_command(mount_path, iptables_command)
 
-        if stderr:
-            print(f"Error running iptables command: {stderr}")
-            return
+            if stderr:
+                print(f"Error running iptables command: {stderr}")
+                return
 
-        current_chain = None
-        current_policy = None
+            rules = []
+            current_chain = ""
+            lines = stdout.splitlines()
 
-        # Parcourir les lignes de la sortie iptables
-        for line in stdout.splitlines():
-            parts = line.split()
+            # Regex pour extraire les ports tcp ou udp
+            port_regex = re.compile(r'(tcp|udp).*dpt:(\d+)')
 
-            if len(parts) == 0:
-                continue
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue  # Ignorer les lignes vides
 
-            # Détection des chaînes (Chain INPUT, FORWARD, OUTPUT, etc.)
-            if line.startswith("Chain"):
-                current_chain = parts[1]  # Nom de la chaîne (ex: INPUT, FORWARD, OUTPUT)
-                current_policy = parts[3]  # Politique (policy) par défaut (ex: ACCEPT, DROP)
-            elif len(parts) >= 7:  # Ignorer les lignes avec les compteurs
-                # Extraction des informations de règle
-                target = parts[0]  # Target (ACCEPT, DROP, etc.)
-                prot = parts[1]  # Protocole (tcp, udp, all)
-                source = parts[3]  # Adresse source
-                destination = parts[4]  # Adresse destination
+                parts = line.split()
 
-                # Détection des ports locaux et distants si spécifiés
-                lport = rport = "-"
-                if "dpt:" in line or "spt:" in line:
-                    for part in parts:
-                        if "dpt:" in part:  # Port destination
-                            lport = part.split(":")[1]
-                        if "spt:" in part:  # Port source
-                            rport = part.split(":")[1]
+                # Si la ligne commence par "Chain", c'est une nouvelle chaîne
+                if line.startswith("Chain"):
+                    current_chain = parts[1]  # On récupère le nom de la chaîne (INPUT, OUTPUT, etc.)
+                    continue
+                if line.startswith("target"):
+                    continue
 
-                # Écriture des données dans le fichier CSV
-                writer.writerow({
+                # Si la ligne ne contient pas assez de colonnes, on l'ignore
+                if len(parts) < 5:
+                    continue
+
+                # Extraire les informations de la ligne
+                target = parts[0]
+                protocol = parts[1]
+                opt = parts[2]
+                source = parts[3]
+                destination = parts[4]
+
+                # Chercher un port si applicable
+                port = ""
+                port_match = port_regex.search(line)
+                if port_match:
+                    protocol = port_match.group(1)
+                    port = port_match.group(2)
+
+                # Ajouter la règle à la liste
+                rules.append({
                     'computer_name': computer_name,
                     'chain': current_chain,
-                    'policy': current_policy,
                     'target': target,
-                    'prot': prot,
+                    'prot': protocol,
                     'source': source,
-                    'lport': lport,
                     'destination': destination,
-                    'rport': rport
+                    'port': port  # À adapter si nécessaire
                 })
 
-        print(f"Firewall rules have been written into {output_file}")
+            # Écrire les règles dans le fichier CSV
+            writer.writerows(rules)
+            print(f"Firewall rules have been written into {output_file}")
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+
 
 def get_windows_machine_name(mount_path):
     #chaine = "Informations du système Windows"
@@ -967,7 +982,7 @@ def get_windows_firewall_rules(mount_path, computer_name):
         "CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\FirewallRules"
     ]
     print("[+] Retrieving Firewall rules...")
-    output_file = os.path.join(script_path, result_folder, "firewall_rules.csv")
+    output_file = os.path.join(script_path, result_folder, "windows_firewall_rules.csv")
 
     csv_columns = ['computer_name', 'action', 'active', 'direction', 'protocol', 'profile', 'srcport', 'dstport', 'app', 'svc', 'rule_name', 'desc', 'embedctxt']
 
