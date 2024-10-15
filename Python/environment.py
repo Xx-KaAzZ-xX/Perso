@@ -13,6 +13,7 @@ import yaml
 import gzip
 import subprocess
 from collections import OrderedDict
+#from tabulate import tabulate
 from datetime import datetime, timedelta
 import sys
 from pathlib import Path
@@ -28,47 +29,9 @@ script_name = sys.argv[0]
 def usage():
     print("Exemple : python " + script_name + " /mnt/root")
 
-def bandeau(chaine):
-    lignes = chaine.split('\n')
-    largeur_max = max(len(ligne) for ligne in lignes)
-    cadre_haut_bas = '+' + '-' * (largeur_max + 2) + '+'
-
-    lignes_encadrees = [cadre_haut_bas]
-    for ligne in lignes:
-        lignes_encadrees.append('| ' + ligne.ljust(largeur_max) + ' |')
-    lignes_encadrees.append(cadre_haut_bas)
-
-    return '\n'.join(lignes_encadrees)
-
 # Déclarer la variable globale pour le répertoire courant original
 original_cwd_fd = None
-'''
-# Fonction pour lancer des commandes chrootées sur un système Linux
-def chroot_and_run_command(mount_path, chroot_command):
-    global original_cwd_fd
-    if original_cwd_fd is None:
-        original_cwd_fd = os.open('/', os.O_RDONLY)
 
-    # Changer la racine du système de fichiers
-    try:
-        os.chroot(mount_path)
-        os.chdir("/")
-    except PermissionError:
-        print("Permission denied: You need to run this script as root.")
-        sys.exit(-1)
-
-    # Exécuter la commande dans l'environnement chrooté
-    try:
-        result = subprocess.run(chroot_command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        print(result.stdout.decode())
-    except subprocess.CalledProcessError as e:
-        print(f"Command '{chroot_command}' failed with error: {e.stderr.decode()}")
-
-    # Restaurer le répertoire courant et la racine d'origine
-    finally:
-        os.fchdir(original_cwd_fd)
-        os.chroot(".")
-'''
 def chroot_and_run_command(mount_path, command):
     """Exécute une commande dans un environnement chrooté."""
     result = subprocess.run(
@@ -434,7 +397,7 @@ def list_connections(mount_path, computer_name):
 
 def list_installed_apps(mount_path, computer_name):
     distro_file = mount_path + "/etc/os-release"
-    output_file = script_path + result_folder + "/linux_installed_apps.csv"
+    output_file = script_path + "/" + result_folder + "/linux_installed_apps.csv"
     print("[+] Retrieving installed apps...")
 
     with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
@@ -882,81 +845,119 @@ def get_startup_services(mount_path, computer_name):
     print(f"Windows services information has been written to {output_file}")
 
 
-def binary_to_sid(binary_data):
-    if len(binary_data) < 12:
-        return ''
-    rev = struct.unpack("<B", binary_data[0:1])[0]
-    authid = ''.join(format(x, '02x') for x in binary_data[2:8]).lstrip('0')
-    if len(binary_data) == 12:
-        sub = struct.unpack("<L", binary_data[8:12])[0]
-        return "S-" + str(rev) + "-" + str(authid) + "-" + str(sub)
-    else:
-        sub = struct.unpack("<LLLL", binary_data[8:24])
-        rid = struct.unpack("<L", binary_data[24:28])[0]
-        return "S-" + str(rev) + "-" + str(authid) + "-" + '-'.join(map(str, sub)) + "-" + str(rid)
-
-def get_windows_users_and_groups(mount_path, computer_name):
-    print("[+] Retrieving users and groups informations...")
+def get_windows_users(mount_path, computer_name):
+    print("[+] Retrieving Windows Users informations...")
     try:
-        results = OrderedDict()
-        sam = Registry.Registry(os.path.join(mount_path, 'Windows/System32/config/SAM'))
+        sam_file = os.path.join(mount_path, 'Windows/System32/config/SAM')
+        regripper_path = "/usr/bin/regripper"
+        output_file = os.path.join(script_path, result_folder, "windows_users.csv")
 
-        # Extraction du domaine Identifier
-        domain_key = sam.open("SAM\\Domains\\Account")
-        f_value = domain_key.value("F").value()  # Ajustez si nécessaire
-        domain_identifier = struct.unpack("<LLLL", f_value[0x24:0x34])  # 0x24 à 0x34
-        domain_identifier = [str(i & 0xFFFFFFFF) for i in domain_identifier]  # & 0xFFFFFFFF pour assurer l'interprétation non signée
-        domain_sid = "S-1-5-" + "-".join(map(str, domain_identifier))
-        print(domain_sid)
+        if os.path.exists(regripper_path):
+            regripper_cmd = f"{regripper_path} -a -r {sam_file}"
+            result_regripper = subprocess.run(regripper_cmd, shell=True, capture_output=True, text=True)
+            output = result_regripper.stdout
 
+            # Vérifiez si l'output est vide
+            if not output.strip():
+                print("[-] No output from regripper.")
+                return
 
-        #Extract username
-        users_root = sam.open("SAM\\Domains\\Account\\Users")
-        for user_key in users_root.subkeys():
-            if user_key.name() == "Names":  # Ignore the "Names" key
-                continue
-            rid = int(user_key.name(), 16)
-            v_value = user_key.value("V").value()
+            lines = output.splitlines()
+            users = []
+            with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=['computer_name', 'username', 'full_name', 'account_type', 'creation_date', 'last_login_date', 'login_count', 'rid'])
+                writer.writeheader()
+                user_info = {}  # Dictionnaire pour stocker les infos utilisateur
+                for line in lines:
+                    if "Username" in line:
+                        if user_info:  # Si des données utilisateur sont déjà présentes, les ajouter avant de commencer un nouveau bloc
+                            user_info["computer_name"] = computer_name  # Ajout du nom de l'ordinateur
+                            users.append(user_info)
+                            writer.writerow(user_info)
+                            user_info = {}  # Réinitialiser pour le prochain utilisateur
+                        username = line.split(":")[1].strip()
+                        user_info["username"] = username
+                    elif "Full Name" in line:
+                        user_info["full_name"] = line.split(":")[1].strip()
+                    elif "Account Type" in line:
+                        user_info["account_type"] = line.split(":")[1].strip()
+                    elif "Account Created" in line:
+                        user_info["creation_date"] = line.split(":")[1].strip()
+                    elif "Last Login Date" in line:
+                        user_info["last_login_date"] = line.split(":")[1].strip()
+                    elif "Login Count" in line:
+                        user_info["login_count"] = line.split(":")[1].strip()
+                    elif "Embedded RID" in line:
+                        user_info["rid"] = line.split(":")[1].strip()
 
-            username_ofst = struct.unpack("<L", v_value[12:16])[0]
-            username_lngth = struct.unpack("<L", v_value[16:20])[0]
-            username = v_value[(username_ofst + 0xCC):(username_ofst + 0xCC + username_lngth)].decode('utf-16-le').replace('\x00','')
-            #print(username)
+                if user_info:  # Ajouter les dernières données utilisateur
+                    user_info["computer_name"] = computer_name
+                    users.append(user_info)
+                    writer.writerow(user_info)
 
-            # Construire le SID de l'utilisateur, il s'agit du domain identifier + RID
-            ## il est faux pour l'instant
-            user_sid = f"{domain_sid}-{rid}"
-
-            results[username] = {'Username' : username, 'RID': rid, 'SID': user_sid}
-        print(results)
-
-        # Extraction des groupes et des membres
-        groups_root = sam.open("SAM\\Domains\\Builtin\\Aliases")
-        for group_key in groups_root.subkeys():
-            if group_key.name().startswith("00000"):
-                c_value = group_key.value("C").value()
-                users_offset = struct.unpack("<L", c_value[40:44])[0]
-                user_count = struct.unpack("<L", c_value[48:52])[0]
-                group_name_ofst = struct.unpack("<L", c_value[16:20])[0]
-                group_name_lngth = struct.unpack("<L", c_value[20:24])[0]
-                group_name = c_value[(group_name_ofst + 52):(group_name_ofst + 52 + group_name_lngth)].decode('utf-16-le').replace('\x00', '')
-
-                # Extraire l'offset de la liste des membres
-                members_offset = struct.unpack("<L", c_value[12:16])[0]
-                # Extraire la longueur de la liste des membres
-                members_length = struct.unpack("<L", c_value[16:20])[0]
-                # Liste des membres à partir de l'offset calculé
-
-                print(f"{user_count} users in {group_name} ")
-                members = []
-                for i in range(user_count):
-                    member_data = c_value[users_offset + i * 4: users_offset + (i + 1) * 4]
-                    rid = struct.unpack("<L", member_data)[0]
-                    print(rid)
-                    members.append(rid)
-                print(members)
+        print(f"Users informations have been written into {output_file}")
+    except Exception as e:
+        print(f"Error : {e}")
 
 
+def get_windows_groups(mount_path, computer_name):
+    print("[+] Retrieving Windows Groups informations...")
+    try:
+        sam_file = os.path.join(mount_path, 'Windows/System32/config/SAM')
+        regripper_path = "/usr/bin/regripper"
+        output_file = os.path.join(script_path, result_folder, "windows_groups.csv")
+
+        if os.path.exists(regripper_path):
+            regripper_cmd = f"{regripper_path} -a -r {sam_file}"
+            result_regripper = subprocess.run(regripper_cmd, shell=True, capture_output=True, text=True)
+            output = result_regripper.stdout
+
+            # Vérifiez si l'output est vide
+            if not output.strip():
+                print("[-] No output from regripper.")
+                return
+
+            lines = output.splitlines()
+            groups = []
+            with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=['computer_name', 'groupname', 'last_write', 'users'])
+                writer.writeheader()
+                group_info = {}  # Dictionnaire pour stocker les infos groupes
+                in_users_section = False  # Flag pour indiquer si on est dans la section "Users"
+                users_list = []  # Liste des utilisateurs membres d'un groupe
+
+                for line in lines:
+                    line = line.strip()  # Nettoyer la ligne des espaces inutiles
+                    # Vérifiez que la ligne contient bien un ":"
+                    if ":" in line:
+                        in_users_section = False  # Dès qu'on trouve un ":", on sort de la section "Users"
+                        if "Group Name" in line:
+                            if group_info:  # Ajouter les infos du groupe précédent
+                                group_info["computer_name"] = computer_name  # Ajouter le nom de l'ordinateur
+                                group_info["users"] = ";".join(users_list) if users_list else "None"  # Ajouter les membres
+                                groups.append(group_info)
+                                writer.writerow(group_info)
+                                group_info = {}  # Réinitialiser pour le prochain groupe
+                                users_list = []  # Réinitialiser la liste des utilisateurs
+                            group_info["groupname"] = line.split(":")[1].strip()
+                        elif "LastWrite" in line:
+                            group_info["last_write"] = line.split(":")[1].strip()
+                        elif "Users" in line:
+                            users_value = line.split(":")[1].strip()
+                            if users_value != "None":  # Si ce n'est pas "None", on commence à chercher les SIDs
+                                in_users_section = True
+                    elif in_users_section:  # On est dans la section "Users", on doit récupérer les SIDs
+                        if line.startswith("S-1-"):  # Si la ligne commence par un SID
+                            users_list.append(line)  # Ajouter le SID à la liste des utilisateurs
+
+                # Ajouter le dernier groupe si nécessaire
+                if group_info:
+                    group_info["computer_name"] = computer_name
+                    group_info["users"] = ";".join(users_list) if users_list else "None"
+                    groups.append(group_info)
+                    writer.writerow(group_info)
+
+        print(f"Groups informations have been written into {output_file}")
     except Exception as e:
         print(f"Error: {e}")
 
@@ -966,8 +967,8 @@ def get_windows_firewall_rules(mount_path, computer_name):
         "CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\FirewallRules"
     ]
     print("[+] Retrieving Firewall rules...")
-    output_file = script_path + "/" + result_folder + "/" + "firewall_rules.csv"
-    # Add 'ComputerName' to the CSV columns
+    output_file = os.path.join(script_path, result_folder, "firewall_rules.csv")
+
     csv_columns = ['computer_name', 'action', 'active', 'direction', 'protocol', 'profile', 'srcport', 'dstport', 'app', 'svc', 'rule_name', 'desc', 'embedctxt']
 
     try:
@@ -991,11 +992,35 @@ def get_windows_firewall_rules(mount_path, computer_name):
                 rule_data = value.value().split('|')
                 rule_dict = {}
 
-                # Parse each part of the rule data, dynamically
+                # Mapping fields to appropriate columns
                 for item in rule_data:
                     if '=' in item:
-                        key, val = item.split('=', 1)
-                        rule_dict[key] = val
+                        k, v = item.split('=', 1)
+                        # Mapping the keys to the corresponding CSV columns
+                        if k == 'Action':
+                            rule_dict['action'] = v
+                        elif k == 'Active':
+                            rule_dict['active'] = v
+                        elif k == 'Dir':
+                            rule_dict['direction'] = v
+                        elif k == 'Protocol':
+                            rule_dict['protocol'] = v
+                        elif k == 'Profile':
+                            rule_dict['profile'] = v
+                        elif k == 'LPort':
+                            rule_dict['srcport'] = v
+                        elif k == 'RPort':
+                            rule_dict['dstport'] = v
+                        elif k == 'App':
+                            rule_dict['app'] = v
+                        elif k == 'Svc':
+                            rule_dict['svc'] = v
+                        elif k == 'Name':
+                            rule_dict['rule_name'] = v
+                        elif k == 'Desc':
+                            rule_dict['desc'] = v
+                        elif k == 'EmbedCtxt':
+                            rule_dict['embedctxt'] = v
 
                 # Add the computer name to the row
                 rule_dict['computer_name'] = computer_name
@@ -1006,6 +1031,8 @@ def get_windows_firewall_rules(mount_path, computer_name):
     print(f"Firewall rules written to {output_file}")
 
 def get_windows_installed_roles(mount_path, computer_name):
+    #chaine = "Windows Installed Roles"
+    #print(bandeau(chaine))
     # Définir le chemin du registre
     output_file = script_path + "/" + result_folder + "/" + "windows_roles.csv"
     #print(f"Role/Feature: {subkey.name()}")
@@ -1023,7 +1050,7 @@ def get_windows_installed_roles(mount_path, computer_name):
         return
 
     # Parcourir les sous-clés
-    with open(output_file, mode='a', newline='', encoding='utf-8') as csvfile:
+    with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
         writer.writeheader()
         for subkey in key.subkeys():
@@ -1148,39 +1175,8 @@ def get_windows_executed_programs(amcache_path, computer_name):
                 print(f"Error accessing subkeys of {subkey.name()}: {e}")
                 continue
     print(f"Executed programs have been written into {output_file}")
-'''
-def get_windows_executed_programs(amcache_path):
-    chaine = "Windows Executed Programs from Amcache"
-    print(bandeau(chaine))
-    # Ouvrir le fichier de registre Amcache.hve
-    try:
-        reg = Registry.Registry(amcache_path)
-    except Exception as e:
-        print(f"Error opening Amcache.hve: {e}")
-        return
 
-    # Ouvrir la clé Root\File qui contient les informations sur les exécutables
-    try:
-        key = reg.open("Root\\File")
-    except Registry.RegistryKeyNotFoundException:
-        print("Couldn't find the Amcache key. Exiting...")
-        return
 
-    # Parcourir et lister les sous-clés de Root\File
-    print("Listing subkeys under Root\\File:")
-    for subkey in key.subkeys():
-
-        # Parcourir et lister les sous-clés de cette sous-clé
-        for sub_subkey in subkey.subkeys():
-            for value in sub_subkey.values():
-                #print(f"{value.name()}")
-                #print(f"{value.value()}")
-                if value.name() == "17":
-                    win_timestamp = (value.value())
-                    print("Executed date: " + str(get_windows_timestamp(win_timestamp)))
-                if value.name() == "15":
-                    print(f"Filepath : {value.value()}")
-'''
 def hayabusa_evtx(mount_path):
     hayabusa_path = script_path + "/hayabusa/hayabusa"
     print(hayabusa_path)
@@ -1239,7 +1235,6 @@ if len(sys.argv) > 1:
             #get_storage_info(mount_path)
             get_network_info(mount_path, computer_name)
             get_users_and_groups(mount_path, computer_name)
-            #get_groups(mount_path)
             list_installed_apps(mount_path, computer_name)
             list_connections(mount_path, computer_name)
             list_services(mount_path, computer_name)
@@ -1252,14 +1247,13 @@ if len(sys.argv) > 1:
             #get_windows_mounted_devices(mount_path)
             #get_windows_disk_volumes(mount_path)
             get_windows_network_info(mount_path, computer_name)
-            get_windows_users_and_groups(mount_path, computer_name)
-            #get_windows_rdp_connections(mount_path)
-            #get_powershell_history(mount_path)
+            get_windows_users(mount_path, computer_name)
+            get_windows_groups(mount_path, computer_name)
             get_startup_services(mount_path, computer_name)
-            #get_windows_firewall_rules(mount_path, computer_name)
-            #get_windows_installed_roles(mount_path, computer_name)
-            #get_windows_installed_programs(mount_path, computer_name)
-            #get_windows_executed_programs(amcache_path, computer_name)
+            get_windows_firewall_rules(mount_path, computer_name)
+            get_windows_installed_roles(mount_path, computer_name)
+            get_windows_installed_programs(mount_path, computer_name)
+            get_windows_executed_programs(amcache_path, computer_name)
             #hayabusa_evtx(mount_path)
         else:
             print("Unknown OS")
