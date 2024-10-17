@@ -1095,7 +1095,7 @@ def get_windows_installed_programs(mount_path, computer_name):
         "WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"
     ]
 
-    output_file = script_path + "/" + result_folder + "/" +  "installed_programs.csv"
+    output_file = script_path + "/" + result_folder + "/" +  "windows_installed_programs.csv"
     csv_columns = ['computer_name','DisplayName', 'DisplayVersion', 'InstallDate', 'Publisher']
     print("[+] Retrieving installed programs")
 
@@ -1142,7 +1142,7 @@ def get_windows_installed_programs(mount_path, computer_name):
 
 
 def get_windows_executed_programs(amcache_path, computer_name):
-    output_file = script_path + "/" + result_folder + "/" + "executed_programs.csv"
+    output_file = script_path + "/" + result_folder + "/" + "windows_executed_programs.csv"
     csv_columns = ['computer_name', 'filepath', 'executed_date']
     print("[+] Retrieving executed programs")
 
