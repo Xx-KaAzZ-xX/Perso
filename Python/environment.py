@@ -2,8 +2,13 @@
 
 
 #. Description: Script d'analyse d'environnement à partir d'un point de montage
+#. Requirements : 
+#- hayabusa in the folder of the script
+#- regripper in the folder of the script
+#- python-regristry
 
 import platform
+import pandas as pd
 import struct
 import os
 import ipaddress
@@ -11,6 +16,7 @@ import re
 import time
 import yaml
 import gzip
+import locale
 import subprocess
 from collections import OrderedDict
 #from tabulate import tabulate
@@ -21,7 +27,9 @@ from Registry import Registry
 from Evtx.Evtx import Evtx
 from lxml import etree
 import csv
+import shutil
 import glob
+import sqlite3
 
 # Chemin vers le système de fichiers monté
 script_name = sys.argv[0]
@@ -59,6 +67,8 @@ def get_system_info(mount_path):
     print("[+] Retrieving System information ...")
     try:
         # Get computer name from /etc/hostname
+        installation_date = ''
+        last_event = ''
         hostname_file = os.path.join(mount_path, "etc/hostname")
         if os.path.exists(hostname_file):
             with open(hostname_file) as f:
@@ -94,18 +104,18 @@ def get_system_info(mount_path):
                         ntp_server = line.split()[1]
 
 
-        # Get installation date
+        # Get last update
         log_installation_file = os.path.join(mount_path, "var/log/installer/syslog")
         if os.path.exists(log_installation_file):
             log_installation_file_infos = os.stat(log_installation_file)
             timestamp = log_installation_file_infos.st_ctime
             last_update = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
-        else:
-            passwd_file = os.path.join(mount_path, "etc/passwd")
-            if os.path.exists(passwd_file):
-                passwd_file_infos = os.stat(passwd_file)
-                timestamp = passwd_file_infos.st_ctime
-                installation_date = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
+        # Get installation_date
+        passwd_file = os.path.join(mount_path, "etc/passwd")
+        if os.path.exists(passwd_file):
+            passwd_file_infos = os.stat(passwd_file)
+            timestamp = passwd_file_infos.st_ctime
+            installation_date = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
 
         # Get last event (this could be tailored depending on the log type)
         last_event_log = os.path.join(mount_path, "var/log/syslog")  # Example for Ubuntu/Debian
@@ -179,66 +189,70 @@ def get_network_info(mount_path, computer_name):
     with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
         writer.writeheader()
-
-        # Extraction des informations des interfaces
-        if os.path.exists(interfaces_file):
-            with open(interfaces_file) as f:
-                #iface, ip, netmask, gateway = None, None, None, None
-                for line in f:
-                    line = line.strip()
-                    if line.startswith('iface'):
-                        iface = line.split()[1]
-                    if 'address' in line:
-                        ip = line.split()[1]
-                    if 'netmask' in line:
-                        netmask = line.split()[1]
-                    if 'gateway' in line:
-                        gateway = line.split()[1]
-                if iface:
-                    writer.writerow({'computer_name': computer_name, 'ip_address': ip, 'netmask': netmask, 'gateway' : gateway})
+        try:
+            # Extraction des informations des interfaces
+            if os.path.exists(interfaces_file):
+                print(f"Trying with {interfaces_file}") 
+                with open(interfaces_file) as f:
+                    #iface, ip, netmask, gateway = None, None, None, None
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith('iface'):
+                            iface = line.split()[1]
+                        if 'address' in line:
+                            ip = line.split()[1]
+                        if 'netmask' in line:
+                            netmask = line.split()[1]
+                        if 'gateway' in line:
+                            gateway = line.split()[1]
+                    if iface:
+                        writer.writerow({'computer_name': computer_name, 'interface' : iface, 'ip_address': ip, 'netmask': netmask, 'gateway' : gateway})
 
         # Extraction des informations pour RedHat (ifcfg)
-        if os.path.exists(redhat_ifcfg_dir):
-            for filename in os.listdir(redhat_ifcfg_dir):
-                if filename.startswith('ifcfg-'):
-                    with open(os.path.join(redhat_ifcfg_dir, filename)) as f:
-                        iface, ip, netmask, gateway = None, None, None, None
-                        for line in f:
-                            if line.startswith('DEVICE'):
-                                iface = line.split('=')[1].strip()
-                            if line.startswith('IPADDR'):
-                                ip = line.split('=')[1].strip()
-                            if line.startswith('NETMASK'):
-                                netmask = line.split('=')[1].strip()
-                            if line.startswith('GATEWAY'):
-                                gateway = line.split('=')[1].strip()
-                        if iface:
-                            writer.writerow({'Interface': iface, 'IP Address': ip, 'Netmask': netmask, 'Gateway': gateway})
-                           #writer.writerow({'Interface': 'netplan', 'IP Address': ip, 'Netmask': 'N/A', 'Gateway': gateway})
+            elif os.path.exists(redhat_ifcfg_dir):
+                for filename in os.listdir(redhat_ifcfg_dir):
+                    #print(f"Trying with {filename}")
+                    if filename.startswith('ifcfg-'):
+                        with open(os.path.join(redhat_ifcfg_dir, filename)) as f:
+                            iface, ip, netmask, gateway = None, None, None, None
+                            for line in f:
+                                if line.startswith('DEVICE'):
+                                    iface = line.split('=')[1].strip()
+                                if line.startswith('IPADDR'):
+                                    ip = line.split('=')[1].strip()
+                                if line.startswith('NETMASK'):
+                                    netmask = line.split('=')[1].strip()
+                                if line.startswith('GATEWAY'):
+                                    gateway = line.split('=')[1].strip()
+                            if iface:
+                                writer.writerow({'computer_name': computer_name, 'interface' : iface, 'ip_address': ip, 'netmask': netmask, 'gateway' : gateway})
 
-        if os.path.exists(netplan_dir):
-            for filename in os.listdir(netplan_dir):
-                 if filename.endswith('.yaml') or filename.endswith('.yml'):  # Vérifier que c'est un fichier YAML
-                     with open(os.path.join(netplan_dir, filename), 'r') as f:
-                         netplan_config = yaml.safe_load(f)  # Charger le contenu YAML
-                # Accéder à la configuration des réseaux
-                         if 'network' in netplan_config and 'ethernets' in netplan_config['network']:
-                             for iface, iface_config in netplan_config['network']['ethernets'].items():
-                                 # Récupérer l'adresse IP et le masque
-                                 ip_info = iface_config.get('addresses', [])
-                                 if ip_info:
-                                     # Supposons qu'il y ait une seule adresse IP configurée
-                                     ip_mask = ip_info[0]  # Prendre la première adresse
-                                     ip, netmask = ip_mask.split('/')  # Séparer l'adresse IP du masque
-                                 # Récupérer la passerelle
-                                 gateway = None
-                                 if 'routes' in iface_config:
-                                     for route in iface_config['routes']:
-                                         if 'to' in route and route['to'] == 'default':
-                                             gateway = route['via']
+            elif os.path.exists(netplan_dir):
+                for filename in os.listdir(netplan_dir):
+                    if filename.endswith('.yaml') or filename.endswith('.yml'):  # Vérifier que c'est un fichier YAML
+                        print(f"Trying with {filename}")
+                        with open(os.path.join(netplan_dir, filename), 'r') as f:
+                            netplan_config = yaml.safe_load(f)  # Charger le contenu YAML
+                            # Accéder à la configuration des réseaux
+                            if 'network' in netplan_config and 'ethernets' in netplan_config['network']:
+                                for iface, iface_config in netplan_config['network']['ethernets'].items():
+                                    # Récupérer l'adresse IP et le masque
+                                    ip_info = iface_config.get('addresses', [])
+                                    if ip_info:
+                                        # Supposons qu'il y ait une seule adresse IP configurée
+                                        ip_mask = ip_info[0]  # Prendre la première adresse
+                                        ip, netmask = ip_mask.split('/')  # Séparer l'adresse IP du masque
+                                        # Récupérer la passerelle
+                                        gateway = None
+                                    if 'routes' in iface_config:
+                                        for route in iface_config['routes']:
+                                            if 'to' in route and route['to'] == 'default':
+                                                gateway = route['via']
 
-                         writer.writerow({'computer_name': computer_name, 'interface': iface, 'ip_address': ip, 'netmask': netmask, 'gateway': gateway})
-        print(f"Network information has been written to {output_file}")
+                            writer.writerow({'computer_name': computer_name, 'interface': iface, 'ip_address': ip, 'netmask': netmask, 'gateway': gateway})
+            print(f"Network information has been written to {output_file}")
+        except Exception as e:
+            print(f"Error retrieving Linux network information : {e}")
 
 
 # Fonction pour récupérer les informations de stockage
@@ -318,7 +332,6 @@ def list_connections(mount_path, computer_name):
     print("[+] Retrieving connection information...")
 
     csv_columns = ['computer_name', 'connection_date', 'user', 'scr_ip']
-
     # Ouvrir le fichier CSV pour écrire les informations
     with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
@@ -368,8 +381,7 @@ def list_connections(mount_path, computer_name):
                         src_ip = parts[2]
                         #scr_ip = parts[-1] if parts[-1] != "::" else "local"  # IP source ou local
                         counter += 1
-                        writer.writerow({'computer_name': computer_name, 'connection_date': connection_date, 'user': user, 'scr_ip': scr_ip})
-
+                        writer.writerow({'computer_name': computer_name, 'connection_date': connection_date, 'user': user, 'scr_ip': src_ip})
             # Vérification de l'existence du dossier audit et recherche des fichiers audit.log
             audit_dir = os.path.join(log_files_path, "audit")
             if os.path.isdir(audit_dir):
@@ -588,27 +600,96 @@ def get_firewall_rules(mount_path, computer_name):
         print(f"An error occurred: {e}")
 
 
+def get_linux_browsing_history(mount_path, computer_name):
+    output_file = script_path + "/" + result_folder + "/" + "linux_browsing_history.csv"
+    csv_columns = ['computer_name', 'source', 'user', 'link', 'search_date']
+    print("[+] Retrieving browsing history")
+
+    find_firefox_cmd = 'find . -type f -name "places.sqlite" '
+    stdout, stderr = chroot_and_run_command(mount_path, find_firefox_cmd)
+    firefox_file = stdout.strip()
+
+    # Chemin du fichier temporaire
+    temp_file = "/tmp/places_temp.sqlite"
+
+    if not firefox_file:
+        print("[-] No Firefox profile found.")
+        return
+
+    # Chemin complet du fichier 'places.sqlite' à partir de l'image montée
+    firefox_profile_file = os.path.join(mount_path, firefox_file)
+    firefox_profile_file = os.path.normpath(firefox_profile_file)
+
+    try:
+        # Copier le fichier places.sqlite dans /tmp
+        shutil.copyfile(firefox_profile_file, temp_file)
+        print(f"[+] Copied Firefox history to temporary file: {temp_file}")
+
+        # Ouvrir le fichier CSV pour écrire les résultats
+        with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=csv_columns)
+            writer.writeheader()
+
+            # Connexion à la copie temporaire de la base de données Firefox
+            conn = sqlite3.connect(temp_file)
+            cursor = conn.cursor()
+
+            # Requête pour récupérer l'historique de navigation
+            cursor.execute("""
+                SELECT moz_places.url, moz_historyvisits.visit_date
+                FROM moz_places, moz_historyvisits
+                WHERE moz_places.id = moz_historyvisits.place_id
+            """)
+            firefox_rows = cursor.fetchall()
+
+            # Traiter les résultats et les écrire dans le fichier CSV
+            for row in firefox_rows:
+                url, visit_time = row
+                visit_date = convert_firefox_time(visit_time)
+                writer.writerow({
+                    'computer_name': computer_name,
+                    'source': 'Firefox',
+                    'user': 'kasper',  # Ajuste le nom de l'utilisateur si nécessaire
+                    'link': url,
+                    'search_date': visit_date
+                })
+
+            # Fermer la connexion à la base de données
+            conn.close()
+            print(f"Browsing history has been written into {output_file}")
+
+    except Exception as e:
+        print(f"Error processing Firefox history: {e}")
+
+    finally:
+        # Supprimer le fichier temporaire après utilisation
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+            print(f"[+] Temporary file {temp_file} has been deleted.")
 
 def get_windows_machine_name(mount_path):
     #chaine = "Informations du système Windows"
     #print (bandeau(chaine))
-    path_to_reg_hive = (mount_path+ 'Windows/System32/config/SYSTEM')
-    reg = Registry.Registry(path_to_reg_hive)
-    try:
-        key = reg.open("ControlSet001\\Control\\ComputerName\\ComputerName")
-    except Registry.RegistryKeyNotFoundException:
-        print("Couldn't find Computer Name. Script terminated.")
-        sys.exit(1)
+    user_input = input("Do you want to set computer name ? (y/N) ").strip().lower()
+    if user_input == 'y':
+        computer_name = input("Veuillez entrer le nom de la machine: ").strip()
+        return computer_name
+    else:
+        path_to_reg_hive = (mount_path+ 'Windows/System32/config/SYSTEM')
+        reg = Registry.Registry(path_to_reg_hive)
+        try:
+            key = reg.open("ControlSet001\\Control\\ComputerName\\ComputerName")
+        except Registry.RegistryKeyNotFoundException:
+            print("Couldn't find Computer Name. Script terminated.")
+            sys.exit(1)
 
-    for value in [v for v in key.values() \
+        for value in [v for v in key.values() \
                        if v.value_type() == Registry.RegSZ or \
                           v.value_type() == Registry.RegExpandSZ]:
     #result = print("%s: %s" % (value.name(), value.value()))
-        if value.name() == "ComputerName":
-            computer_name = value.value()
-            #print(f"Nom de la machine: {computer_name}")
-            #print("Nom de la machine: "+value.value())
-            return computer_name
+            if value.name() == "ComputerName":
+                computer_name = value.value()
+                return computer_name
 
 def get_windows_storage_info(mount_path):
     try:
@@ -682,9 +763,10 @@ def get_windows_disk_volumes(mount_path):
 
 
 
+
 def get_windows_info(mount_path, computer_name):
     output_file = script_path + "/" + result_folder + "/" + "windows_system_info.csv"  # Assurez-vous que result_folder est défini si nécessaire
-    csv_columns = ['computer_name', 'windows_version', 'installation_date', 'ntp_server', 'last_update', 'last_event']
+    csv_columns = ['computer_name', 'windows_version', 'installation_date', 'ntp_server', 'last_update', 'last_event', 'keyboard_layout']
 
     # Initialisation des variables
     system_info = {
@@ -693,7 +775,8 @@ def get_windows_info(mount_path, computer_name):
         'installation_date': '',
         'ntp_server': '',
         'last_update': '',
-        'last_event': ''
+        'last_event': '',
+        'keyboard_layout': ''
     }
     print("[+] Retrieving system information...")
     # Récupération des informations NTP (dans le registre SYSTEM)
@@ -706,6 +789,22 @@ def get_windows_info(mount_path, computer_name):
                 system_info['ntp_server'] = value.value()
     except Exception as e:
         print(f"Erreur lors de la récupération des informations NTP: {e}")
+    try:
+        path_to_ntdat = os.path.join(mount_path, 'Users/Default/NTUSER.DAT')
+        reg = Registry.Registry(path_to_ntdat)
+        keyboard_key = reg.open("Keyboard Layout\\Preload")
+        for value in keyboard_key.values():
+            layout_hex = value.value()
+            layout_int = int(layout_hex, 16)
+            lang_code = locale.windows_locale.get(layout_int)
+            if lang_code:
+                system_info['keyboard_layout'] = lang_code
+            else:
+                lang_code = ""
+                system_info['keyboard_layout'] = lang_code
+    except Exception as e:
+        print(f"Error retrieving keyboard layout : {e}")
+
 
 
     # Récupération des informations de produit et d'installation (dans le registre SOFTWARE)
@@ -747,6 +846,7 @@ def get_windows_info(mount_path, computer_name):
                 system_info['last_update'] = value.value()
     except Exception as e:
         print(f"Erreur lors de la récupération des informations de dernière mise à jour: {e}")
+
 
 
 # Écriture des informations dans un fichier CSV
@@ -1064,39 +1164,41 @@ def get_windows_installed_roles(mount_path, computer_name):
         print("Couldn't find the key. Exiting...")
         return
 
-    # Parcourir les sous-clés
-    with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
-        writer.writeheader()
-        for subkey in key.subkeys():
-            install_state = None
-            role_name = subkey.name()
+    try:
+        # Parcourir les sous-clés
+        with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
+            writer.writeheader()
+            for subkey in key.subkeys():
+                install_state = None
+                role_name = subkey.name()
+                try:
+                    if subkey.values():
+                    #print(f"there is value in {role_name}")
+                    # Parcourir les valeurs de chaque sous-clé pour trouver 'InstallState'
+                        for value in subkey.values():
+                            if value.name() == "InstallState":
+                                install_state = value.value()
+                            continue
+                        writer.writerow({'computer_name': computer_name, 'role_name': role_name, 'install_state': install_state})
+                    else:
+                        continue
+                        writer.writerow({'computer_name': computer_name, 'role_name': role_name, 'install_state': 'No value'})
+                except Exception as e_bis:
+                    writer.writerow({'computer_name': computer_name, 'role_name': role_name, 'install_state': 'No value'})
+            print(f"Roles information have been written into {output_file}")
+    except Exception as e:
+        print(f"Error retrieving roles information : {e}")
 
-            # Parcourir les valeurs de chaque sous-clé pour trouver 'InstallState'
-            for value in subkey.values():
-                if value.name() == "InstallState":
-                    install_state = value.value()
-                    break
-
-            # Afficher les sous-clés dont la valeur 'InstallState' est 1
-            #if install_state == 1:
-                #print(f"Role/Feature: {subkey.name()}")
-                #writer.writerow({'computer_name': computer_name, 'role_name': role_name, 'install_state': install_state})
-            #elif install_state != 1:
-                #print(f"Role/Feature: {subkey.name()} is {install_state}")
-            writer.writerow({'computer_name': computer_name, 'role_name': role_name, 'install_state': install_state})
-        print(f"Roles information have been written into {output_file}")
-
+'''
 def get_windows_installed_programs(mount_path, computer_name):
     installed_programs_paths = [
-        "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
-        "Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
-        "Microsoft\\Windows\\CurrentVersion\\Uninstall",  # Ajout de ce chemin au cas où
+        "Microsoft\\Windows\\CurrentVersion\\Uninstall",
         "WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"
     ]
 
-    output_file = script_path + "/" + result_folder + "/" +  "windows_installed_programs.csv"
-    csv_columns = ['computer_name','DisplayName', 'DisplayVersion', 'InstallDate', 'Publisher']
+    output_file = script_path + "/" + result_folder + "/" + "windows_installed_programs.csv"
+    csv_columns = ['computer_name', 'DisplayName', 'DisplayVersion', 'InstallDate', 'Publisher']
     print("[+] Retrieving installed programs")
 
     try:
@@ -1116,29 +1218,101 @@ def get_windows_installed_programs(mount_path, computer_name):
                 print(f"Couldn't find the key {path}. Continuing...\n")
                 continue
 
-            for subkey in key.subkeys():
-                program_info = {
-                    'computer_name': computer_name,
-                    'DisplayName': '',
-                    'DisplayVersion': '',
-                    'InstallDate': '',
-                    'Publisher': ''
-                }
+            try:
+                # Capturer l'erreur lors de la tentative d'accès aux sous-clés
+                subkeys = key.subkeys()
+            except Exception as e:
+                print(f"Error retrieving subkeys from {path}: {e}")
+                continue
 
-                for value in subkey.values():
-                    if value.name() == 'DisplayName':
-                        program_info['DisplayName'] = value.value()
-                    elif value.name() == 'DisplayVersion':
-                        program_info['DisplayVersion'] = value.value()
-                    elif value.name() == 'InstallDate':
-                        program_info['InstallDate'] = value.value()
-                    elif value.name() == 'Publisher':
-                        program_info['Publisher'] = value.value()
+            for subkey in subkeys:
+                try:
+                    program_info = {
+                        'computer_name': computer_name,
+                        'DisplayName': '',
+                        'DisplayVersion': '',
+                        'InstallDate': '',
+                        'Publisher': ''
+                    }
 
-                if program_info['DisplayName']:  # Only write if there is a program name
-                    writer.writerow(program_info)
+                    for value in subkey.values():
+                        if value.name() == 'DisplayName':
+                            program_info['DisplayName'] = value.value()
+                        elif value.name() == 'DisplayVersion':
+                            program_info['DisplayVersion'] = value.value()
+                        elif value.name() == 'InstallDate':
+                            program_info['InstallDate'] = value.value()
+                        elif value.name() == 'Publisher':
+                            program_info['Publisher'] = value.value()
+
+                    if program_info['DisplayName']:  # Only write if there is a program name
+                        writer.writerow(program_info)
+
+                except Exception as subkey_error:
+                    print(f"Error processing subkey {subkey.name()}: {subkey_error}")
+                    continue  # Skip this subkey if there's an issue
 
     print(f"Installed programs have been written into {output_file}")
+'''
+
+def get_windows_installed_programs(mount_path, computer_name):
+    output_file = script_path + "/" + result_folder + "/" + "windows_installed_programs.csv"
+    software_file = os.path.join(mount_path, 'Windows/System32/config/SOFTWARE')
+    csv_columns = ['computer_name', 'program_name', 'program_version', 'install_date']
+    print("[+] Retrieving installed programs")
+
+    regripper_path = "/usr/bin/regripper"  # Chemin vers regripper
+    try:
+        regripper_cmd = f"{regripper_path} -p uninstall -r {software_file}"
+        result_regripper = subprocess.run(regripper_cmd, shell=True, capture_output=True, text=True)
+        output = result_regripper.stdout
+
+        # Vérifiez si l'output est vide
+        if not output.strip():
+            print("[-] No output from regripper.")
+            return
+
+        # Décomposition de l'output en lignes
+        lines = output.splitlines()
+        programs = []
+        install_date = None
+
+        # Parcourir les lignes pour extraire les informations
+        for line in lines:
+            line = line.strip()
+
+            # Identifier les lignes contenant les dates d'installation
+            if "Z" in line and line.endswith("Z"):
+                install_date = line.strip()
+            elif "v." in line:
+                # Extraction du nom et de la version du programme
+                try:
+                    program_name, program_version = line.rsplit(" v.", 1)
+                    program_name = program_name.strip()
+                    program_version = program_version.strip()
+
+                    # Ajout des informations à la liste des programmes
+                    programs.append({
+                        'computer_name': computer_name,
+                        'program_name': program_name,
+                        'program_version': program_version,
+                        'install_date': install_date
+                    })
+                except ValueError:
+                    continue  # Ignore toute ligne qui ne correspond pas au format attendu
+
+        # Écriture des informations dans le fichier CSV
+        with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=csv_columns)
+            writer.writeheader()
+            writer.writerows(programs)
+
+        print(f"[+] Installed programs have been written into {output_file}")
+
+    except Exception as e:
+        print(f"Error running regripper or writing output: {e}")
+        return
+
 
 
 def get_windows_executed_programs(amcache_path, computer_name):
@@ -1192,20 +1366,111 @@ def get_windows_executed_programs(amcache_path, computer_name):
     print(f"Executed programs have been written into {output_file}")
 
 
-def hayabusa_evtx(mount_path):
+def convert_chrome_time(chrome_timestamp):
+    """ Convert Webkit timestamp (microseconds since 1601) to human-readable date. """
+    epoch_start = datetime(1601, 1, 1)
+    return epoch_start + timedelta(microseconds=chrome_timestamp)
+
+def convert_firefox_time(firefox_timestamp):
+    """ Convert Unix timestamp in microseconds to human-readable date. """
+    return datetime.utcfromtimestamp(firefox_timestamp / 1000000)
+
+def get_windows_browsing_history(mount_path, computer_name):
+    output_file = script_path + "/" + result_folder + "/" + "windows_browsing_history.csv"
+    csv_columns = ['computer_name', 'source', 'user', 'link', 'search_date']
+    print("[+] Retrieving browsing history")
+    temp_file = "/tmp/places_temp.sqlite"
+
+    # Ouvrir le fichier CSV pour écrire les résultats
+    with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=csv_columns)
+        writer.writeheader()
+
+        # Parcourir les utilisateurs dans le répertoire Users
+        users_dir = os.path.join(mount_path, 'Users')
+        for user in os.listdir(users_dir):
+            user_dir = os.path.join(users_dir, user)
+
+            # 1. Google Chrome
+            chrome_history_path = os.path.join(user_dir, 'AppData/Local/Google/Chrome/User Data/Default/History')
+            if os.path.exists(chrome_history_path):
+
+                try:
+                    # Open the Chrome History SQLite file
+                    conn = sqlite3.connect(chrome_history_path)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT urls.url, visits.visit_time FROM urls, visits WHERE urls.id = visits.url")
+                    chrome_rows = cursor.fetchall()
+
+                    for row in chrome_rows:
+                        url, visit_time = row
+                        visit_date = convert_chrome_time(visit_time)
+                        writer.writerow({
+                            'computer_name': computer_name,
+                            'source': 'Chrome',
+                            'user': user,
+                            'link': url,
+                            'search_date': visit_date
+                        })
+
+                    conn.close()
+                except Exception as e:
+                    print(f"Error processing Chrome history: {e}")
+
+            # 2. Firefox
+            firefox_profile_dir = os.path.join(user_dir, 'AppData/Roaming/Mozilla/Firefox/Profiles')
+            if os.path.exists(firefox_profile_dir):
+                for profile in os.listdir(firefox_profile_dir):
+                    places_db = os.path.join(firefox_profile_dir, profile, 'places.sqlite')
+                    if os.path.exists(places_db):
+                        print(places_db)
+                        try:
+                            shutil.copyfile(places_db, temp_file)
+                            # Open the Firefox History SQLite file
+                            conn = sqlite3.connect(places_db)
+                            cursor = conn.cursor()
+                            cursor.execute("SELECT moz_places.url, moz_historyvisits.visit_date FROM moz_places, moz_historyvisits WHERE moz_places.id = moz_historyvisits.place_id")
+                            firefox_rows = cursor.fetchall()
+
+                            for row in firefox_rows:
+                                url, visit_time = row
+                                visit_date = convert_firefox_time(visit_time)
+                                writer.writerow({
+                                    'computer_name': computer_name,
+                                    'source': 'Firefox',
+                                    'user': user,
+                                    'link': url,
+                                    'search_date': visit_date
+                                })
+
+                            conn.close()
+
+                        except Exception as e:
+                            print(f"Error processing Firefox history: {e}")
+                        finally:
+                            if os.path.exists(temp_file):
+                                os.remove(temp_file)
+
+    print(f"Browsing history has been written into {output_file}")
+
+def hayabusa_evtx(mount_path, computer_name):
     hayabusa_path = script_path + "/hayabusa/hayabusa"
-    print(hayabusa_path)
     run_hayabusa = input("Do you want to launch Hayabusa? (yes/no): ").strip().lower()
 
     if run_hayabusa == "yes":
         # Demander le nom du fichier de sortie
-        output_filename = input("Enter the filename for the output CSV: ").strip()
+        if os.path.exists(hayabusa_path):
+            output_file = script_path + "/" + result_folder + "/" + "hayabusa_output.csv"
+            print("[+] Launching Hayabusa...")
+            command = f"{hayabusa_path} csv-timeline -C -d {mount_path}/Windows/System32/winevt/Logs/ -T -o {output_file}"
+            os.system(command)
+            df = pd.read_csv(output_file)
+            df['Computer'] = computer_name
+            df.to_csv(output_file, index=False)
 
-    # Construire la commande à exécuter
-    command = f"{hayabusa_path} csv-timeline -d {mount_path}/Windows/System32/winevt/Logs/ -T -o {output_filename}"
-
-    # Exécuter la commande
-    os.system(command)
+        else:
+            print(f"[-] Hayabusa executable has to be in {script_path} folder.")
+            
 
 def determine_platform(mount_path):
     linux_indicators = ['etc', 'var', 'usr']
@@ -1254,6 +1519,7 @@ if len(sys.argv) > 1:
             list_connections(mount_path, computer_name)
             list_services(mount_path, computer_name)
             get_firewall_rules(mount_path, computer_name)
+            get_linux_browsing_history(mount_path, computer_name)
             #create_volatility_profile(mount_path)
         elif platform == "Windows":
             computer_name = get_windows_machine_name(mount_path)
@@ -1269,7 +1535,9 @@ if len(sys.argv) > 1:
             get_windows_installed_roles(mount_path, computer_name)
             get_windows_installed_programs(mount_path, computer_name)
             get_windows_executed_programs(amcache_path, computer_name)
-            #hayabusa_evtx(mount_path)
+            get_windows_browsing_history(mount_path, computer_name)
+            hayabusa_evtx(mount_path, computer_name)
+            #extract_windows_evtx
         else:
             print("Unknown OS")
     else:
@@ -1280,3 +1548,4 @@ else:
 # Fermer le descripteur de fichier global après utilisation
 if original_cwd_fd is not None:
     os.close(original_cwd_fd)
+
