@@ -60,30 +60,33 @@ def get_windows_timestamp(win_timestamp):
 
     return final_date
 
-
-# Fonction pour récupérer les informations système
 def get_system_info(mount_path):
-    output_file = script_path + "/" + result_folder + "/linux_system_info.csv"
+    output_file = os.path.join(script_path, result_folder, "linux_system_info.csv")
     print("[+] Retrieving System information ...")
     try:
-        # Get computer name from /etc/hostname
+        # Initialisation des valeurs par défaut
+        last_update = "Unknown"
         installation_date = ''
         last_event = ''
+        distro_version = "Unknown"
+        
+        # Get computer name from /etc/hostname
         hostname_file = os.path.join(mount_path, "etc/hostname")
         if os.path.exists(hostname_file):
             with open(hostname_file) as f:
                 computer_name = f.read().strip()
-                #return computer_name
 
-        # Get distribution from /etc/os-release
+        # Get distribution and version from /etc/os-release
         distro_file = os.path.join(mount_path, "etc/os-release")
         if os.path.exists(distro_file):
             with open(distro_file) as f:
                 for line in f:
                     if line.startswith("ID="):
                         distro = line.strip().split("=")[1].strip('"')
-                        #break
-         # Extraction des DNS à partir de resolv.conf
+                    elif line.startswith("VERSION_ID="):
+                        distro_version = line.strip().split("=")[1].strip('"')
+
+        # Extraction des DNS
         resolv_file = os.path.join(mount_path, "etc/resolv.conf")
         ntp_file = os.path.join(mount_path, "etc/ntp.conf")
         dns_servers = []
@@ -91,11 +94,10 @@ def get_system_info(mount_path):
             with open(resolv_file) as f:
                 for line in f:
                     if line.startswith('nameserver'):
-                        dns_servers.append(line.split()[1])  # Ajoute le serveur DNS à la liste
-         # Si vous voulez stocker tous les serveurs DNS dans une seule chaîne pour 'system_info'
-            if dns_servers:
-                dns_server = ', '.join(dns_servers)  # Joindre les serveurs par des virgules
-        # Extraction du serveur NTP à partir de ntp.conf
+                        dns_servers.append(line.split()[1])
+            dns_server = ', '.join(dns_servers) if dns_servers else "Unknown"
+
+        # Extraction du serveur NTP
         ntp_server = None
         if os.path.exists(ntp_file):
             with open(ntp_file) as f:
@@ -103,13 +105,6 @@ def get_system_info(mount_path):
                     if line.startswith('server'):
                         ntp_server = line.split()[1]
 
-
-        # Get last update
-        log_installation_file = os.path.join(mount_path, "var/log/installer/syslog")
-        if os.path.exists(log_installation_file):
-            log_installation_file_infos = os.stat(log_installation_file)
-            timestamp = log_installation_file_infos.st_ctime
-            last_update = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
         # Get installation_date
         passwd_file = os.path.join(mount_path, "etc/passwd")
         if os.path.exists(passwd_file):
@@ -117,58 +112,49 @@ def get_system_info(mount_path):
             timestamp = passwd_file_infos.st_ctime
             installation_date = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
 
-        # Get last event (this could be tailored depending on the log type)
-        last_event_log = os.path.join(mount_path, "var/log/syslog")  # Example for Ubuntu/Debian
+        # Get last event
+        last_event_log = os.path.join(mount_path, "var/log/syslog")
         if os.path.exists(last_event_log):
             last_log_infos = os.stat(last_event_log)
             timestamp = last_log_infos.st_mtime
             last_event = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
 
-        last_update_file = ""
+        # Get last update based on distro
         if distro in ["debian", "ubuntu", "kali"]:
             log_path = os.path.join(mount_path, "var/log/apt/history.log")
-
-            if not os.path.exists(log_path):
-                print(f"Log file for updates not found for {distro}.")
-                return None
-
-            last_update = None
-
-            with open(log_path, "r") as log_file:
-                for line in log_file:
-                    if "Start-Date" in line:
-                        # Extract the date
-                        date_str = line.split("Start-Date: ")[-1].strip()
-                        # Parse the date to datetime object
-                        last_update = datetime.strptime(date_str, "%Y-%m-%d  %H:%M:%S")
+            if os.path.exists(log_path):
+                with open(log_path, "r") as log_file:
+                    for line in log_file:
+                        if "Start-Date" in line:
+                            date_str = line.split("Start-Date: ")[-1].strip()
+                            last_update = datetime.strptime(date_str, "%Y-%m-%d  %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
 
         elif distro in ["rhel", "centos", "fedora", "almalinux"]:
-              log_path = os.path.join(mount_path, "var/log/yum.log")
-
-              if not os.path.exists(log_path):
-                  print(f"Log file for updates not found for {distro}.")
-                  return None
-
-              last_update = None
-
-              with open(log_path, "r") as log_file:
-                  for line in log_file:
-                      if "Updated" in line:
-                          # Extract the date (example format: 'Jan 01 12:34:56')
-                          date_str = line[:15].strip()
-                          # Parse the date to datetime object
-                          last_update = datetime.strptime(date_str, "%b %d %H:%M:%S")
-
-       # Output results to CSV
+            log_path = os.path.join(mount_path, "var/log/yum.log")
+            if os.path.exists(log_path):
+                with open(log_path, "r") as log_file:
+                    for line in log_file:
+                        if "Updated" in line:
+                            date_str = line[:15].strip()
+                            last_update = datetime.strptime(date_str, "%b %d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Output results to CSV
         with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
-            fieldnames = ['computer_name', 'distro', 'installation_date', 'ntp_server', 'dns_server', 'last_update', 'last_event']
+            fieldnames = ['computer_name', 'distro', 'distro_version', 'installation_date', 'ntp_server', 'dns_server', 'last_update', 'last_event']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
-            #writer.writerow(system_info)
-            writer.writerow({'computer_name': computer_name, 'distro': distro, 'installation_date': installation_date, 'ntp_server': ntp_server, 'dns_server': dns_server, 'last_update': last_update, 'last_event': last_event})
+            writer.writerow({
+                'computer_name': computer_name,
+                'distro': distro,
+                'distro_version': distro_version,
+                'installation_date': installation_date,
+                'ntp_server': ntp_server,
+                'dns_server': dns_server,
+                'last_update': last_update,
+                'last_event': last_event
+            })
 
-        print(f"System information have been written to {output_file}")
-
+        print(f"System information has been written to {output_file}")
         return computer_name
 
     except Exception as e:
@@ -523,6 +509,48 @@ def list_services(mount_path, computer_name):
     else:
         print("System is not managed by Systemd")
 
+
+def get_command_history(mount_path, computer_name):
+    output_file = os.path.join(script_path, result_folder, "linux_command_history.csv")
+    print("[+] Retrieving command history ...")
+    csv_columns = ['computer_name', 'user', 'shell', 'command']
+    
+    try:
+        with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=csv_columns)
+            writer.writeheader()
+            
+            # Rechercher tous les dossiers "home" pour les utilisateurs
+            home_dirs = glob.glob(os.path.join(mount_path, "home", "*"))
+            home_dirs.append(os.path.join(mount_path, "root"))
+
+            
+            for home_dir in home_dirs:
+                user = os.path.basename(home_dir)
+                # Vérifier les fichiers d'historique de commandes
+                for shell_history_file in ['.bash_history', '.zsh_history', '.sh_history']:
+                    history_file_path = os.path.join(home_dir, shell_history_file)
+                    shell = shell_history_file.replace("_history", "").replace(".", "")
+                    
+                    if os.path.exists(history_file_path):
+                        try:
+                            with open(history_file_path, 'r', encoding='utf-8', errors='ignore') as hist_file:
+                                for command in hist_file:
+                                    command = command.strip()
+                                    if command:
+                                        writer.writerow({
+                                            'computer_name': computer_name,
+                                            'user': user,
+                                            'shell': shell,
+                                            'command': command
+                                        })
+                        except Exception as file_error:
+                            print(f"Error reading {history_file_path}: {file_error}")
+    
+    except Exception as e:
+        print(f"Error retrieving command history: {e}")
+    
+    print(f"Command history has been written into {output_file}") 
 
 def get_firewall_rules(mount_path, computer_name):
     output_file = os.path.join(script_path, result_folder, "linux_firewall_rules.csv")
@@ -1337,32 +1365,35 @@ def get_windows_executed_programs(amcache_path, computer_name):
     with open(output_file, mode='a', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=csv_columns)
         writer.writeheader()
+        try:
+            # Parcourir et lister les sous-clés de Root\File
+            for subkey in key.subkeys():
+                program_info = {
+                    'computer_name': computer_name,
+                    'filepath': '',
+                    'executed_date': ''
+                }
+                try:
+                    # Parcourir et lister les sous-clés de cette sous-clé
+                    for sub_subkey in subkey.subkeys():
+                        for value in sub_subkey.values():
+                            # print(f"{value.name()}")
+                            # print(f"{value.value()}")
+                            if value.name() == "17":
+                                win_timestamp = (value.value())
+                                #print("Executed date: " + str(get_windows_timestamp(win_timestamp)))
+                                program_info['executed_date'] = str(get_windows_timestamp(win_timestamp))
+                            if value.name() == "15":
+                                #print(f"Filepath : {value.value()}")
+                                program_info['filepath'] = (value.value())
+                        if program_info['filepath']:
+                            writer.writerow(program_info)
+                except Registry.RegistryKeyNotFoundException as e:
+                    print(f"Error accessing subkeys of {subkey.name()}: {e}")
+                    continue
+        except Exception as e:
+            print(f"problem retrieving executed program elements : {e}")
 
-        # Parcourir et lister les sous-clés de Root\File
-        for subkey in key.subkeys():
-            program_info = {
-                'computer_name': computer_name,
-                'filepath': '',
-                'executed_date': ''
-            }
-            try:
-                # Parcourir et lister les sous-clés de cette sous-clé
-                for sub_subkey in subkey.subkeys():
-                    for value in sub_subkey.values():
-                        # print(f"{value.name()}")
-                        # print(f"{value.value()}")
-                        if value.name() == "17":
-                            win_timestamp = (value.value())
-                            #print("Executed date: " + str(get_windows_timestamp(win_timestamp)))
-                            program_info['executed_date'] = str(get_windows_timestamp(win_timestamp))
-                        if value.name() == "15":
-                            #print(f"Filepath : {value.value()}")
-                            program_info['filepath'] = (value.value())
-                    if program_info['filepath']:
-                        writer.writerow(program_info)
-            except Registry.RegistryKeyNotFoundException as e:
-                print(f"Error accessing subkeys of {subkey.name()}: {e}")
-                continue
     print(f"Executed programs have been written into {output_file}")
 
 
@@ -1463,6 +1494,7 @@ def hayabusa_evtx(mount_path, computer_name):
             output_file = script_path + "/" + result_folder + "/" + "hayabusa_output.csv"
             print("[+] Launching Hayabusa...")
             command = f"{hayabusa_path} csv-timeline -C -d {mount_path}/Windows/System32/winevt/Logs/ -T -o {output_file}"
+            #command = f"{hayabusa_path} csv-timeline -C -N -A -a -w -d {mount_path}/Windows/System32/winevt/Logs/ -T -o {output_file}"
             os.system(command)
             df = pd.read_csv(output_file)
             df['Computer'] = computer_name
@@ -1518,6 +1550,7 @@ if len(sys.argv) > 1:
             list_installed_apps(mount_path, computer_name)
             list_connections(mount_path, computer_name)
             list_services(mount_path, computer_name)
+            get_command_history(mount_path, computer_name)
             get_firewall_rules(mount_path, computer_name)
             get_linux_browsing_history(mount_path, computer_name)
             #create_volatility_profile(mount_path)
