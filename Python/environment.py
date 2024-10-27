@@ -695,6 +695,40 @@ def get_linux_browsing_history(mount_path, computer_name):
             os.remove(temp_file)
             print(f"[+] Temporary file {temp_file} has been deleted.")
 
+def get_linux_used_space(mount_path, computer_name):
+    output_file = os.path.join(script_path, result_folder, "linux_disk_usage.csv")
+    csv_columns = ['computer_name', 'directory', 'percent_used']
+    print("[+] Retrieving disk usage ...")
+    
+    try:
+        # Taille totale de la partition racine (en octets)
+        total_size = shutil.disk_usage(mount_path).total
+
+        # Ouvrir le fichier CSV pour écrire les résultats
+        with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=csv_columns)
+            writer.writeheader()
+            chroot_command = "du -sb /*"
+            result, _ = chroot_and_run_command(mount_path, chroot_command)
+            excluded_dirs = {'dev', 'proc', 'sys', 'run'}
+            lines = result.splitlines()
+            for line in lines:
+                bytes_size = line.split()[0]
+                directory = line.split('/')[1]
+                if directory in excluded_dirs:
+                    continue
+                percentage = (int(bytes_size) / total_size) * 100
+                percentage_truncated = f"{percentage:.2f}"
+                writer.writerow({
+                    'computer_name': computer_name,
+                    'directory': directory,
+                    'percent_used' : percentage_truncated
+                    })
+        print(f"Disk usage information has been written to {output_file}")
+        
+    except Exception as e:
+        print(f"An error occurred while gathering disk usage information: {e}")
+
 def get_windows_machine_name(mount_path):
     #chaine = "Informations du système Windows"
     #print (bandeau(chaine))
@@ -1552,6 +1586,7 @@ if len(sys.argv) > 1:
             list_services(mount_path, computer_name)
             get_command_history(mount_path, computer_name)
             get_firewall_rules(mount_path, computer_name)
+            get_linux_used_space(mount_path, computer_name)
             get_linux_browsing_history(mount_path, computer_name)
             #create_volatility_profile(mount_path)
         elif platform == "Windows":
@@ -1581,4 +1616,5 @@ else:
 # Fermer le descripteur de fichier global après utilisation
 if original_cwd_fd is not None:
     os.close(original_cwd_fd)
+
 
