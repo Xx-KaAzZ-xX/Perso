@@ -65,10 +65,10 @@ def get_system_info(mount_path):
     print("[+] Retrieving System information ...")
     try:
         # Initialisation des valeurs par défaut
-        last_update = "Unknown"
+        last_update = ''
         installation_date = ''
         last_event = ''
-        distro_version = "Unknown"
+        distro_version = ''
         
         # Get computer name from /etc/hostname
         hostname_file = os.path.join(mount_path, "etc/hostname")
@@ -317,7 +317,7 @@ def list_connections(mount_path, computer_name):
     output_file = script_path + "/" + result_folder + "/" + "linux_connections.csv"
     print("[+] Retrieving connection information...")
 
-    csv_columns = ['computer_name', 'connection_date', 'user', 'scr_ip']
+    csv_columns = ['computer_name', 'connection_date', 'user', 'src_ip']
     # Ouvrir le fichier CSV pour écrire les informations
     with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
@@ -348,9 +348,9 @@ def list_connections(mount_path, computer_name):
                             connection_date = " ".join(parts[0:3])  # Date de connexion
                             connection_date_with_year = f"{connection_date} {file_creation_year}"
                             user = parts[8]  # Utilisateur
-                            scr_ip = parts[10]  # IP source
+                            src_ip = parts[10]  # IP source
                             counter += 1
-                            writer.writerow({'computer_name': computer_name, 'connection_date': connection_date_with_year, 'user': user, 'scr_ip': scr_ip})
+                            writer.writerow({'computer_name': computer_name, 'connection_date': connection_date_with_year, 'user': user, 'src_ip': src_ip})
                                        # Traitement des fichiers wtmp (via la commande last)
             if "wtmp" in log_file:
                 last_cmd = f"last -F -f {log_file_path}"
@@ -365,9 +365,8 @@ def list_connections(mount_path, computer_name):
                             #print("belek")
                             continue
                         src_ip = parts[2]
-                        #scr_ip = parts[-1] if parts[-1] != "::" else "local"  # IP source ou local
                         counter += 1
-                        writer.writerow({'computer_name': computer_name, 'connection_date': connection_date, 'user': user, 'scr_ip': src_ip})
+                        writer.writerow({'computer_name': computer_name, 'connection_date': connection_date, 'user': user, 'src_ip': src_ip})
             # Vérification de l'existence du dossier audit et recherche des fichiers audit.log
             audit_dir = os.path.join(log_files_path, "audit")
             if os.path.isdir(audit_dir):
@@ -384,9 +383,9 @@ def list_connections(mount_path, computer_name):
                             if "success" in parts:
                                 connection_date = parts[0] + " " + parts[1]  # Date de connexion
                                 user = parts[-4]  # Utilisateur
-                                scr_ip = parts[-1]  # IP source
+                                src_ip = parts[-1]  # IP source
                                 counter += 1
-                                writer.writerow({'computer_name': computer_name, 'connection_date': connection_date, 'user': user, 'scr_ip': scr_ip})
+                                writer.writerow({'computer_name': computer_name, 'connection_date': connection_date, 'user': user, 'src_ip': src_ip})
     if counter >= 1:
         print(f"Connections informations have been written into {output_file}")
     else:
@@ -430,10 +429,11 @@ def list_installed_apps(mount_path, computer_name):
 
                 if result:
                     for line in result.splitlines():
+                        #print(line)
                         parts = line.split()
-                        if len(parts) > 1:
-                            install_date = " ".join(parts[:3])
-                            package_name = parts[3]
+                        if len(parts) > 4:
+                            install_date = " ".join(parts[1:6])
+                            package_name = parts[7]
                             writer.writerow({'computer_name' : computer_name, 'package_name': package_name, 'install_date': install_date})
                 else:
                     print("No RPM packages found, checking yum logs.")
