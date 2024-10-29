@@ -16,6 +16,7 @@ import re
 import time
 import yaml
 import gzip
+import json
 import locale
 import subprocess
 from collections import OrderedDict
@@ -694,6 +695,72 @@ def get_linux_browsing_history(mount_path, computer_name):
         if os.path.exists(temp_file):
             os.remove(temp_file)
             print(f"[+] Temporary file {temp_file} has been deleted.")
+
+def get_linux_browsing_data(mount_path, computer_name):
+    output_file = script_path + "/" + result_folder + "/" + "linux_browsing_data.csv"
+    csv_columns = ['computer_name', 'source', 'user', 'ident', 'creds', 'platform', 'saved_date']
+    print("[+] Retrieving browsing data (saved logins)")
+
+    with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=csv_columns)
+        writer.writeheader()
+
+        users_dir = os.path.join(mount_path, 'home')
+        for user in os.listdir(users_dir):
+            user_dir = os.path.join(users_dir, user)
+
+            # 1. Google Chrome logins
+            chrome_login_path = os.path.join(user_dir, '.config/google-chrome/Default/Login Data')
+            if os.path.exists(chrome_login_path):
+                try:
+                    conn = sqlite3.connect(chrome_login_path)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT origin_url, username_value, password_value, date_created FROM logins")
+                    chrome_rows = cursor.fetchall()
+
+                    for row in chrome_rows:
+                        url, username, password, date_created = row
+                        saved_date = convert_chrome_time(date_created)
+                        writer.writerow({
+                            'computer_name': computer_name,
+                            'source': 'Chrome',
+                            'user': user,
+                            'ident': username,
+                            'creds': password,  # The password is encrypted; decryption may require OS-specific methods
+                            'platform': url,
+                            'saved_date': saved_date
+                        })
+
+                    conn.close()
+                except Exception as e:
+                    print(f"Error processing Chrome logins for user {user}: {e}")
+
+            # 2. Mozilla Firefox logins
+            firefox_profile_dir = os.path.join(user_dir, '.mozilla/firefox')
+            if os.path.exists(firefox_profile_dir):
+                try:
+                    for profile in os.listdir(firefox_profile_dir):
+                        profile_dir = os.path.join(firefox_profile_dir, profile)
+                        if os.path.isdir(profile_dir) and profile.endswith('.default-release'):
+                            login_db_path = os.path.join(profile_dir, 'logins.json')
+                            if os.path.exists(login_db_path):
+                                with open(login_db_path, 'r', encoding='utf-8') as login_file:
+                                    logins = json.load(login_file).get('logins', [])
+                                    for login in logins:
+                                        writer.writerow({
+                                            'computer_name': computer_name,
+                                            'source': 'Firefox',
+                                            'user': user,
+                                            'ident': login.get('usernameField', ''),
+                                            'creds': login.get('passwordField', ''),  # Encrypted; requires further processing to decrypt
+                                            'platform': login.get('hostname', ''),
+                                            'saved_date': datetime.fromtimestamp(login['timeCreated'] / 1000).isoformat()
+                                        })
+
+                except Exception as e:
+                    print(f"Error processing Firefox logins for user {user}: {e}")
+
+    print(f"Browsing data has been written into {output_file}")
 
 def get_linux_used_space(mount_path, computer_name):
     output_file = os.path.join(script_path, result_folder, "linux_disk_usage.csv")
@@ -1377,57 +1444,68 @@ def get_windows_installed_programs(mount_path, computer_name):
 
 
 
-def get_windows_executed_programs(amcache_path, computer_name):
+def get_windows_executed_programs(mount_path, computer_name):
     output_file = script_path + "/" + result_folder + "/" + "windows_executed_programs.csv"
     csv_columns = ['computer_name', 'filepath', 'executed_date']
     print("[+] Retrieving executed programs")
+    amcache_path = mount_path + "Windows/AppCompat/Programs/Amcache.hve"
 
-    # Ouvrir le fichier de registre Amcache.hve
-    try:
-        reg = Registry.Registry(amcache_path)
-    except Exception as e:
-        print(f"Error opening Amcache.hve: {e}")
-        return
+    possible_amcache_path = [
+        "Windows/AppCompat/Programs/Amcache.hve"
+        "Windows/appcompat/Programs/Amcache.hve"
+    ]
 
-    # Ouvrir la clé Root\File qui contient les informations sur les exécutables
-    try:
-        key = reg.open("Root\\File")
-    except Registry.RegistryKeyNotFoundException:
-        print("Couldn't find the Amcache key. Exiting...")
-        return
-
-    with open(output_file, mode='a', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=csv_columns)
-        writer.writeheader()
-        try:
-            # Parcourir et lister les sous-clés de Root\File
-            for subkey in key.subkeys():
-                program_info = {
-                    'computer_name': computer_name,
-                    'filepath': '',
-                    'executed_date': ''
-                }
+    for amcache in possible_amcache_path:
+        amcache_path = mount_path + amcache
+        if os.path.exists(amcache_path):
+            # Ouvrir le fichier de registre Amcache.hve
+            try:
+                reg = Registry.Registry(amcache_path)
+            except Exception as e:
+                print(f"Error opening Amcache.hve: {e}")
+                continue
+    
+            # Ouvrir la clé Root\File qui contient les informations sur les exécutables
+            try:
+                key = reg.open("Root\\File")
+            except Registry.RegistryKeyNotFoundException:
+                print("Couldn't find the Amcache key. Exiting...")
+                return
+    
+            with open(output_file, mode='a', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=csv_columns)
+                writer.writeheader()
                 try:
-                    # Parcourir et lister les sous-clés de cette sous-clé
-                    for sub_subkey in subkey.subkeys():
-                        for value in sub_subkey.values():
-                            # print(f"{value.name()}")
-                            # print(f"{value.value()}")
-                            if value.name() == "17":
-                                win_timestamp = (value.value())
-                                #print("Executed date: " + str(get_windows_timestamp(win_timestamp)))
-                                program_info['executed_date'] = str(get_windows_timestamp(win_timestamp))
-                            if value.name() == "15":
-                                #print(f"Filepath : {value.value()}")
-                                program_info['filepath'] = (value.value())
-                        if program_info['filepath']:
-                            writer.writerow(program_info)
-                except Registry.RegistryKeyNotFoundException as e:
-                    print(f"Error accessing subkeys of {subkey.name()}: {e}")
-                    continue
-        except Exception as e:
-            print(f"problem retrieving executed program elements : {e}")
-
+                    # Parcourir et lister les sous-clés de Root\File
+                    for subkey in key.subkeys():
+                        program_info = {
+                            'computer_name': computer_name,
+                            'filepath': '',
+                            'executed_date': ''
+                        }
+                        try:
+                            # Parcourir et lister les sous-clés de cette sous-clé
+                            for sub_subkey in subkey.subkeys():
+                                for value in sub_subkey.values():
+                                    # print(f"{value.name()}")
+                                    # print(f"{value.value()}")
+                                    if value.name() == "17":
+                                        win_timestamp = (value.value())
+                                        #print("Executed date: " + str(get_windows_timestamp(win_timestamp)))
+                                        program_info['executed_date'] = str(get_windows_timestamp(win_timestamp))
+                                    if value.name() == "15":
+                                        #print(f"Filepath : {value.value()}")
+                                        program_info['filepath'] = (value.value())
+                                if program_info['filepath']:
+                                    writer.writerow(program_info)
+                        except Registry.RegistryKeyNotFoundException as e:
+                            print(f"Error accessing subkeys of {subkey.name()}: {e}")
+                            continue
+                except Exception as e:
+                    print(f"problem retrieving executed program elements : {e}")
+        else:
+            continue
+    
     print(f"Executed programs have been written into {output_file}")
 
 
@@ -1482,41 +1560,118 @@ def get_windows_browsing_history(mount_path, computer_name):
                 except Exception as e:
                     print(f"Error processing Chrome history: {e}")
 
-            # 2. Firefox
+            #2. Firefox
             firefox_profile_dir = os.path.join(user_dir, 'AppData/Roaming/Mozilla/Firefox/Profiles')
             if os.path.exists(firefox_profile_dir):
                 for profile in os.listdir(firefox_profile_dir):
                     places_db = os.path.join(firefox_profile_dir, profile, 'places.sqlite')
                     if os.path.exists(places_db):
-                        print(places_db)
+                        print(f"[+] Firefox file found: {places_db}")
                         try:
+                            # Copier le fichier places.sqlite dans /tmp
                             shutil.copyfile(places_db, temp_file)
-                            # Open the Firefox History SQLite file
-                            conn = sqlite3.connect(places_db)
-                            cursor = conn.cursor()
-                            cursor.execute("SELECT moz_places.url, moz_historyvisits.visit_date FROM moz_places, moz_historyvisits WHERE moz_places.id = moz_historyvisits.place_id")
-                            firefox_rows = cursor.fetchall()
+                            print(f"[+] Copied Firefox history to temporary file: {temp_file}")
 
+                            # Connexion à la copie temporaire de la base de données Firefox
+                            conn = sqlite3.connect(temp_file)
+                            cursor = conn.cursor()
+                            # Requête pour récupérer l'historique de navigation
+                            cursor.execute("""
+                                SELECT moz_places.url, moz_historyvisits.visit_date
+                                FROM moz_places, moz_historyvisits
+                                WHERE moz_places.id = moz_historyvisits.place_id
+                            """)
+                            firefox_rows = cursor.fetchall()
+                            # Traiter les résultats et les écrire dans le fichier CSV
                             for row in firefox_rows:
                                 url, visit_time = row
                                 visit_date = convert_firefox_time(visit_time)
                                 writer.writerow({
                                     'computer_name': computer_name,
                                     'source': 'Firefox',
-                                    'user': user,
+                                    'user': user,  # Ajuste le nom de l'utilisateur si nécessaire
                                     'link': url,
                                     'search_date': visit_date
                                 })
 
+                            # Fermer la connexion à la base de données
                             conn.close()
+                            print(f"Browsing history has been written into {output_file}")
 
                         except Exception as e:
                             print(f"Error processing Firefox history: {e}")
+
                         finally:
                             if os.path.exists(temp_file):
                                 os.remove(temp_file)
+                                print(f"[+] Temporary file {temp_file} has been deleted.")
 
     print(f"Browsing history has been written into {output_file}")
+
+
+def get_windows_browsing_data(mount_path, computer_name):
+    output_file = script_path + "/" + result_folder + "/" + "windows_browsing_data.csv"
+    csv_columns = ['computer_name', 'source', 'user', 'ident', 'creds', 'platform', 'saved_date']
+    print("[+] Retrieving browsing data (saved logins)")
+    
+    with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=csv_columns)
+        writer.writeheader()
+
+        users_dir = os.path.join(mount_path, 'Users')
+        for user in os.listdir(users_dir):
+            user_dir = os.path.join(users_dir, user)
+
+            # 1. Google Chrome logins
+            chrome_login_path = os.path.join(user_dir, 'AppData/Local/Google/Chrome/User Data/Default/Login Data')
+            if os.path.exists(chrome_login_path):
+                try:
+                    conn = sqlite3.connect(chrome_login_path)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT origin_url, username_value, password_value, date_created FROM logins")
+                    chrome_rows = cursor.fetchall()
+
+                    for row in chrome_rows:
+                        url, username, password, date_created = row
+                        saved_date = convert_chrome_time(date_created)
+                        writer.writerow({
+                            'computer_name': computer_name,
+                            'source': 'Chrome',
+                            'user': user,
+                            'ident': username,
+                            'creds': password,  # The password is encrypted; decryption may require OS-specific methods
+                            'platform': url,
+                            'saved_date': saved_date
+                        })
+
+                    conn.close()
+                except Exception as e:
+                    print(f"Error processing Chrome logins for user {user}: {e}")
+
+            # 2. Mozilla Firefox logins
+            firefox_login_path = os.path.join(user_dir, 'AppData/Roaming/Mozilla/Firefox/Profiles')
+            if os.path.exists(firefox_login_path):
+                try:
+                    for profile in os.listdir(firefox_login_path):
+                        login_db_path = os.path.join(firefox_login_path, profile, 'logins.json')
+                        if os.path.exists(login_db_path):
+                            with open(login_db_path, 'r', encoding='utf-8') as login_file:
+                                logins = json.load(login_file).get('logins', [])
+                                for login in logins:
+                                    writer.writerow({
+                                        'computer_name': computer_name,
+                                        'source': 'Firefox',
+                                        'user': user,
+                                        'ident': login['usernameField'],
+                                        'creds': login['passwordField'],  # Encrypted; requires further processing to decrypt
+                                        'platform': login['hostname'],
+                                        'saved_date': datetime.fromtimestamp(login['timeCreated'] / 1000).isoformat()
+                                    })
+
+                except Exception as e:
+                    print(f"Error processing Firefox logins for user {user}: {e}")
+
+    print(f"Browsing data has been written into {output_file}")
 
 def hayabusa_evtx(mount_path, computer_name):
     hayabusa_path = script_path + "/hayabusa/hayabusa"
@@ -1537,6 +1692,80 @@ def hayabusa_evtx(mount_path, computer_name):
         else:
             print(f"[-] Hayabusa executable has to be in {script_path} folder.")
             
+ 
+
+def get_crypto(mount_path, computer_name):
+    run_find_crypto = input("Do you want to launch some crypto research? It will be quite long? (yes/no): ").strip().lower()
+
+    if run_find_crypto == "yes":
+        output_file = f"{script_path}/{result_folder}/crypto.csv"
+
+        folder_to_search = ['.bitcoin', '.monero', '.electrum']
+        files_to_search = ['wallet.dat', 'wallet.keys', 'default_wallet']
+
+        # Regex patterns for wallet addresses
+        wallet_patterns = {
+            'Bitcoin': r"\b([13][a-km-zA-HJ-NP-Z1-9]{25,34})|bc(0([ac-hj-np-z02-9]{39}|[ac-hj-np-z02-9]{59})|1[ac-hj-np-z02-9]{8,87})\b",
+            # 'Monero': r'\b4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}\b',
+            # 'Litecoin': r'\b[L3][a-km-zA-HJ-NP-Z1-9]{26,33}\b',
+        }
+
+        print("[+] Launching Crypto research. It may take several minutes...")
+
+        # Search for folders
+        for folder in folder_to_search:
+            print(f"Looking for {folder} in all the filesystem")
+            find_dir_cmd = f"find {mount_path} -type d -name {folder}"
+            result_find_dir = subprocess.run(find_dir_cmd, shell=True, capture_output=True, text=True)
+            output = result_find_dir.stdout
+            if output:
+                print(f"[+] Result found for {folder} !")
+                print(output)
+
+        print("[-] No crypto folders found... Looking for files")
+        # Search for specific files
+        for file in files_to_search:
+            print(f"Looking for {file} in all the filesystem")
+            find_file_cmd = f"find {mount_path} -type f -name {file}"
+            result_find_file = subprocess.run(find_file_cmd, shell=True, capture_output=True, text=True)
+            output = result_find_file.stdout
+            if output:
+                print(f"[+] Result found for {file} !")
+                print(output)
+
+        print("[-] Looking for wallet addresses inside common text and database files...")
+
+        # Search for wallet addresses in text and database files
+        file_types_to_search = ["*.txt", "*.sqlite", "*.db"]
+        for pattern_name, regex_pattern in wallet_patterns.items():
+            compiled_pattern = re.compile(regex_pattern)
+            print(f"Searching for {pattern_name} wallet addresses with pattern: {regex_pattern}")
+
+            for file_type in file_types_to_search:
+                find_file_type_cmd = f"find {mount_path} -type f -name '{file_type}'"
+                result_find_type = subprocess.run(find_file_type_cmd, shell=True, capture_output=True, text=True)
+                files = result_find_type.stdout.strip().splitlines()
+
+                for file_path in files:
+                    try:
+                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read()
+                            matches = compiled_pattern.findall(content)
+                            match_count = len(matches)
+
+                            # Only include the file if match count is 2 or less
+                            if 0 < match_count <= 2:
+                                print(f"[+] {pattern_name} wallet address(es) found in {file_path}: {matches}")
+                                with open(output_file, "a") as out_file:
+                                    for match in matches:
+                                        out_file.write(f"{computer_name},{file_path},{pattern_name},{match}\n")
+                            elif match_count > 2:
+                                print(f"[-] Skipping {file_path} due to high match count ({match_count}).")
+
+                    except Exception as e:
+                        print(f"[-] Error reading file {file_path}: {e}")
+
+        print("[+] Crypto wallet address search completed.")
 
 def determine_platform(mount_path):
     linux_indicators = ['etc', 'var', 'usr']
@@ -1562,7 +1791,6 @@ if len(sys.argv) > 1:
     mount_path = sys.argv[1]
     if not mount_path.endswith('/'):
         mount_path += '/'
-    amcache_path = mount_path + "Windows/AppCompat/Programs/Amcache.hve"
     script_path = os.path.dirname(os.path.realpath(__file__))
     normalized_mount_path = os.path.normpath(mount_path)
     platform = determine_platform(mount_path)
@@ -1578,7 +1806,6 @@ if len(sys.argv) > 1:
                 print(f"Error creating folder {result_folder}: {e}")
         if platform == "Linux":
             computer_name = get_system_info(mount_path)
-            #get_storage_info(mount_path)
             get_network_info(mount_path, computer_name)
             get_users_and_groups(mount_path, computer_name)
             list_installed_apps(mount_path, computer_name)
@@ -1588,13 +1815,11 @@ if len(sys.argv) > 1:
             get_firewall_rules(mount_path, computer_name)
             get_linux_used_space(mount_path, computer_name)
             get_linux_browsing_history(mount_path, computer_name)
+            get_linux_browsing_data(mount_path, computer_name)
             #create_volatility_profile(mount_path)
         elif platform == "Windows":
             computer_name = get_windows_machine_name(mount_path)
             get_windows_info(mount_path, computer_name)
-            #get_windows_storage_info(mount_path)
-            #get_windows_mounted_devices(mount_path)
-            #get_windows_disk_volumes(mount_path)
             get_windows_network_info(mount_path, computer_name)
             get_windows_users(mount_path, computer_name)
             get_windows_groups(mount_path, computer_name)
@@ -1602,9 +1827,11 @@ if len(sys.argv) > 1:
             get_windows_firewall_rules(mount_path, computer_name)
             get_windows_installed_roles(mount_path, computer_name)
             get_windows_installed_programs(mount_path, computer_name)
-            get_windows_executed_programs(amcache_path, computer_name)
+            get_windows_executed_programs(mount_path, computer_name)
             get_windows_browsing_history(mount_path, computer_name)
+            get_windows_browsing_data(mount_path, computer_name)
             hayabusa_evtx(mount_path, computer_name)
+            #get_crypto(mount_path, computer_name)
             #extract_windows_evtx
         else:
             print("Unknown OS")
