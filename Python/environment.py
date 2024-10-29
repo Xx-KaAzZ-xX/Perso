@@ -41,6 +41,17 @@ def usage():
 # Déclarer la variable globale pour le répertoire courant original
 original_cwd_fd = None
 
+def red(text):
+    return f"\033[91m{text}\033[0m"
+
+def green(text):
+    return f"\033[92m{text}\033[0m"
+
+def yellow(text):
+    return f"\033[93m{text}\033[0m"
+
+
+
 def chroot_and_run_command(mount_path, command):
     """Exécute une commande dans un environnement chrooté."""
     result = subprocess.run(
@@ -63,7 +74,7 @@ def get_windows_timestamp(win_timestamp):
 
 def get_system_info(mount_path):
     output_file = os.path.join(script_path, result_folder, "linux_system_info.csv")
-    print("[+] Retrieving System information ...")
+    print(yellow(f"[+] Retrieving System information ..."))
     try:
         # Initialisation des valeurs par défaut
         last_update = ''
@@ -155,11 +166,11 @@ def get_system_info(mount_path):
                 'last_event': last_event
             })
 
-        print(f"System information has been written to {output_file}")
+        print(green(f"[92m System information has been written to {output_file}"))
         return computer_name
 
     except Exception as e:
-        print("An error occurred while gathering system information:", e)
+        print(red(f"[-] An error occurred while gathering system information: {e}"))
 
 def get_network_info(mount_path, computer_name):
 
@@ -237,28 +248,16 @@ def get_network_info(mount_path, computer_name):
                                                 gateway = route['via']
 
                             writer.writerow({'computer_name': computer_name, 'interface': iface, 'ip_address': ip, 'netmask': netmask, 'gateway': gateway})
-            print(f"Network information has been written to {output_file}")
+            print(green(f"Network information has been written to {output_file}"))
         except Exception as e:
-            print(f"Error retrieving Linux network information : {e}")
+            print(red(f"Error retrieving Linux network information : {e}"))
 
-
-# Fonction pour récupérer les informations de stockage
-def get_storage_info(mount_path):
-    try:
-        # à voir si ça marche vraiment avec un filesystem monté sur le système
-        disk_usage = os.popen("df -h " + mount_path).read()
-    except Exception as e:
-        print("Une erreur s'est produite lors de la récupération des informations de stockage :", e)
-        return
-    chaine = "Informations de stockage "
-    print(bandeau(chaine))
-    print(disk_usage)
 
 def get_users_and_groups(mount_path, computer_name):
     output_file = script_path + "/" + result_folder + "/" + "linux_users_and_groups.csv"
     users = []
     groups = []
-    print("[+] Retrieving users & groups informations")
+    print(yellow("[+] Retrieving users & groups informations"))
     # Command to get users from /etc/passwd
     passwd_file = os.path.join(mount_path, "etc/passwd")
     group_file = os.path.join(mount_path, "etc/group")
@@ -312,11 +311,11 @@ def get_users_and_groups(mount_path, computer_name):
                 'groups': ','.join(user['groups'])
             })
 
-    print(f"Users and groups information written to {output_file}")
+    print(green(f"Users and groups information written to {output_file}"))
 
 def list_connections(mount_path, computer_name):
     output_file = script_path + "/" + result_folder + "/" + "linux_connections.csv"
-    print("[+] Retrieving connection information...")
+    print(yellow("[+] Retrieving connection information..."))
 
     csv_columns = ['computer_name', 'connection_date', 'user', 'src_ip']
     # Ouvrir le fichier CSV pour écrire les informations
@@ -328,7 +327,7 @@ def list_connections(mount_path, computer_name):
         log_files_path = os.path.join(mount_path, "var/log")
 
         if not os.path.isdir(log_files_path):
-            print("Log folder doesn't exist.")
+            print(red(f"[-] Folder {log_files_path} doesn't exist."))
             return
 
         log_files = os.listdir(log_files_path)
@@ -388,20 +387,21 @@ def list_connections(mount_path, computer_name):
                                 counter += 1
                                 writer.writerow({'computer_name': computer_name, 'connection_date': connection_date, 'user': user, 'src_ip': src_ip})
     if counter >= 1:
-        print(f"Connections informations have been written into {output_file}")
+        print(green(f"Connections informations have been written into {output_file}"))
     else:
-        print(f"No connections has been found, {output_file} is empty")
+        print(yellow(f" No connections has been found, {output_file} is empty"))
 
 
 def list_installed_apps(mount_path, computer_name):
     distro_file = mount_path + "/etc/os-release"
     output_file = script_path + "/" + result_folder + "/linux_installed_apps.csv"
-    print("[+] Retrieving installed apps...")
+    print(yellow("[+] Retrieving installed apps..."))
 
     with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
         fieldnames = ['computer_name', 'package_name', 'install_date']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
+        counter = 0
 
         if os.path.exists(distro_file):
             with open(distro_file) as f:
@@ -422,6 +422,7 @@ def list_installed_apps(mount_path, computer_name):
                             install_date = parts[0] + " " + parts[1]
                             package_name = parts[2]
                             writer.writerow({'computer_name' : computer_name, 'package_name': package_name, 'install_date': install_date})
+                            counter += 1
 
             # Pour RHEL/CentOS/Fedora/AlmaLinux
             elif distro in ["rhel", "centos", "fedora", "almalinux"]:
@@ -436,8 +437,9 @@ def list_installed_apps(mount_path, computer_name):
                             install_date = " ".join(parts[1:6])
                             package_name = parts[7]
                             writer.writerow({'computer_name' : computer_name, 'package_name': package_name, 'install_date': install_date})
+                            counter += 1
                 else:
-                    print("No RPM packages found, checking yum logs.")
+                    print(yellow("No RPM packages found, checking yum logs."))
 
                     # Lister les logs yum pour récupérer les infos d'installation
                     yum_log_path = os.path.join(mount_path, "var/log/yum.log*")
@@ -454,6 +456,7 @@ def list_installed_apps(mount_path, computer_name):
                                             install_date = " ".join(parts[:3])
                                             package_name = parts[-1]
                                             writer.writerow({'computer_name' : computer_name, 'package_name': package_name, 'install_date': install_date})
+                                            counter += 1
                             else:
                                 with open(log_file, 'r', encoding='utf-8') as f:
                                     result_logs = f.read()
@@ -463,11 +466,15 @@ def list_installed_apps(mount_path, computer_name):
                                             install_date = " ".join(parts[:3])
                                             package_name = parts[-1]
                                             writer.writerow({'computer_name' : computer_name, 'package_name': package_name, 'install_date': install_date})
+                                            counter += 1
                     else:
                         print("No yum logs found.")
-            print(f"Linux installed apps informations have been written into {output_file}")
+            if counter >= 1:
+                print(green(f"Linux installed apps informations have been written into {output_file}"))
+            else:
+                print(yellow(f"{output_file} should be empty"))
         else:
-            print("Unknown distribution")
+            print(red("[-] Unknown distribution"))
 
 
 def list_services(mount_path, computer_name):
@@ -907,7 +914,7 @@ def get_windows_info(mount_path, computer_name):
         'last_event': '',
         'keyboard_layout': ''
     }
-    print("[+] Retrieving system information...")
+    print(yellow(f"[+] Retrieving system information..."))
     # Récupération des informations NTP (dans le registre SYSTEM)
     path_to_reg_hive = os.path.join(mount_path, 'Windows/System32/config/SYSTEM')
     try:
@@ -917,7 +924,7 @@ def get_windows_info(mount_path, computer_name):
             if value.name() == "NtpServer":
                 system_info['ntp_server'] = value.value()
     except Exception as e:
-        print(f"Erreur lors de la récupération des informations NTP: {e}")
+        print(red(f"Erreur lors de la récupération des informations NTP: {e}"))
     try:
         path_to_ntdat = os.path.join(mount_path, 'Users/Default/NTUSER.DAT')
         reg = Registry.Registry(path_to_ntdat)
@@ -932,7 +939,7 @@ def get_windows_info(mount_path, computer_name):
                 lang_code = ""
                 system_info['keyboard_layout'] = lang_code
     except Exception as e:
-        print(f"Error retrieving keyboard layout : {e}")
+        print(red(f"[-] Error retrieving keyboard layout : {e}"))
 
 
 
@@ -954,7 +961,7 @@ def get_windows_info(mount_path, computer_name):
                 date_time = datetime.fromtimestamp(install_date_timestamp)
                 system_info['installation_date'] = date_time.strftime("%Y-%m-%d %H:%M:%S")
     except Exception as e:
-        print(f"Erreur lors de la récupération des informations du produit ou de la date d'installation: {e}")
+        print(red(f"[-]Error retrieving system installation information: {e}"))
 
     # Récupération du dernier événement (last_event)
     try:
@@ -964,7 +971,7 @@ def get_windows_info(mount_path, computer_name):
             timestamp = last_log_infos.st_mtime
             system_info['last_event'] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
     except Exception as e:
-        print(f"Erreur lors de la récupération du dernier événement: {e}")
+        print(red(f"Error retrieving last event: {e}"))
 
         # Récupération de la dernière MAJ
     try:
@@ -974,7 +981,7 @@ def get_windows_info(mount_path, computer_name):
             if value.name() == "LastSuccessTime":
                 system_info['last_update'] = value.value()
     except Exception as e:
-        print(f"Erreur lors de la récupération des informations de dernière mise à jour: {e}")
+        print(red(f"[-] Error retrieving last update information: {e}"))
 
 
 
@@ -984,22 +991,22 @@ def get_windows_info(mount_path, computer_name):
             writer = csv.DictWriter(f, fieldnames=csv_columns)
             writer.writeheader()
             writer.writerow(system_info)
-        print(f"System information has been written into {output_file}")
+        print(green(f"System information has been written into {output_file}"))
     except Exception as e:
-        print(f"Erreur lors de l'écriture dans le fichier CSV: {e}")
+        print(red(f"[-] Error writting into the CSV: {e}"))
 
 def get_windows_network_info(mount_path, computer_name):
     path_to_reg_hive = os.path.join(mount_path, 'Windows/System32/config/SYSTEM')
     reg = Registry.Registry(path_to_reg_hive)
     output_file = script_path + "/" + result_folder + "/" + "windows_network_info.csv"
-    print("[+] Retrieving network information")
+    print(yellow("[+] Retrieving network information"))
     # Initialisation des données
     network_info = []
 
     try:
         key = reg.open("ControlSet001\\Services\\Tcpip\\Parameters\\Interfaces")
     except Registry.RegistryKeyNotFoundException:
-        print("Couldn't find the network informations. Exiting...")
+        print(red("[-] Couldn't find the network informations. Exiting..."))
         return
 
     for subkey in key.subkeys():
@@ -1035,30 +1042,31 @@ def get_windows_network_info(mount_path, computer_name):
             writer = csv.DictWriter(f, fieldnames=['computer_name', 'interface', 'ip_address', 'netmask', 'gateway', 'dns_server'])
             writer.writeheader()
             writer.writerows(network_info)
-        print(f"Network information has been written into {output_file}")
+        print(green(f"Network information has been written into {output_file}"))
     except Exception as e:
-        print(f"Erreur lors de l'écriture dans le fichier CSV: {e}")
+        print(red(f"Erreur lors de l'écriture dans le fichier CSV: {e}"))
 
 def get_startup_services(mount_path, computer_name):
     # Registry path for services
     services_path = "ControlSet001\\Services"
     output_file = os.path.join(script_path, result_folder, "windows_services.csv")
-    print("[+] Retrieving Windows Services information...")
+    print(yellow("[+] Retrieving Windows Services information..."))
 
     # Load the SYSTEM hive
     try:
         reg = Registry.Registry(os.path.join(mount_path, 'Windows/System32/config/SYSTEM'))
     except Exception as e:
-        print(f"Error loading SYSTEM hive: {e}")
+        print(red(f"[-] Error loading SYSTEM hive: {e}"))
         return
 
     try:
         key = reg.open(services_path)
     except Registry.RegistryKeyNotFoundException:
-        print(f"Couldn't find the services key at {services_path}. Exiting...")
+        print(red(f"[-] Couldn't find the services key at {services_path}. Exiting..."))
         return
 
     # Open the output file to store the list of startup services
+    counter = 0
     with open(output_file, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=['computer_name', 'service_name', 'start_type'])
         writer.writeheader()
@@ -1082,15 +1090,16 @@ def get_startup_services(mount_path, computer_name):
 
                     # Write the service information to the CSV
                     writer.writerow({'computer_name': computer_name, 'service_name': service_name, 'start_type': start_type})
+                    counter += 1
             except Registry.RegistryValueNotFoundException:
                 # If "Start" value is not found, skip the service
                 continue
-
-    print(f"Windows services information has been written to {output_file}")
+    if counter >= 1:
+        print(green(f"Windows services information has been written to {output_file}"))
 
 
 def get_windows_users(mount_path, computer_name):
-    print("[+] Retrieving Windows Users informations...")
+    print(yellow("[+] Retrieving Windows Users informations..."))
     try:
         sam_file = os.path.join(mount_path, 'Windows/System32/config/SAM')
         regripper_path = "/usr/bin/regripper"
@@ -1103,11 +1112,12 @@ def get_windows_users(mount_path, computer_name):
 
             # Vérifiez si l'output est vide
             if not output.strip():
-                print("[-] No output from regripper.")
+                print(red("[-] No output from regripper."))
                 return
 
             lines = output.splitlines()
             users = []
+            counter = 0
             with open(output_file, mode='w', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=['computer_name', 'username', 'full_name', 'account_type', 'creation_date', 'last_login_date', 'login_count', 'rid'])
                 writer.writeheader()
@@ -1138,14 +1148,15 @@ def get_windows_users(mount_path, computer_name):
                     user_info["computer_name"] = computer_name
                     users.append(user_info)
                     writer.writerow(user_info)
-
-        print(f"Users informations have been written into {output_file}")
+                    counter += 1
+        if counter >= 1:
+            print(green(f"Users informations have been written into {output_file}"))
     except Exception as e:
-        print(f"Error : {e}")
+        print(red(f"[-] Error : {e}"))
 
 
 def get_windows_groups(mount_path, computer_name):
-    print("[+] Retrieving Windows Groups informations...")
+    print(yellow("[+] Retrieving Windows Groups informations..."))
     try:
         sam_file = os.path.join(mount_path, 'Windows/System32/config/SAM')
         regripper_path = "/usr/bin/regripper"
@@ -1158,7 +1169,7 @@ def get_windows_groups(mount_path, computer_name):
 
             # Vérifiez si l'output est vide
             if not output.strip():
-                print("[-] No output from regripper.")
+                print(red("[-] No output from regripper."))
                 return
 
             lines = output.splitlines()
@@ -1201,16 +1212,16 @@ def get_windows_groups(mount_path, computer_name):
                     groups.append(group_info)
                     writer.writerow(group_info)
 
-        print(f"Groups informations have been written into {output_file}")
+        print(green(f"Groups informations have been written into {output_file}"))
     except Exception as e:
-        print(f"Error: {e}")
+        print(red(f"Error: {e}"))
 
 def get_windows_firewall_rules(mount_path, computer_name):
     firewall_paths = [
         "ControlSet001\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\FirewallRules",
         "CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\FirewallRules"
     ]
-    print("[+] Retrieving Firewall rules...")
+    print(yellow("[+] Retrieving Firewall rules..."))
     output_file = os.path.join(script_path, result_folder, "windows_firewall_rules.csv")
 
     csv_columns = ['computer_name', 'action', 'active', 'direction', 'protocol', 'profile', 'srcport', 'dstport', 'app', 'svc', 'rule_name', 'desc', 'embedctxt']
@@ -1218,18 +1229,18 @@ def get_windows_firewall_rules(mount_path, computer_name):
     try:
         reg = Registry.Registry(os.path.join(mount_path, 'Windows/System32/config/SYSTEM'))
     except Exception as e:
-        print(f"Error loading SYSTEM hive: {e}")
+        print(red(f"Error loading SYSTEM hive: {e}"))
         return
 
     with open(output_file, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=csv_columns)
         writer.writeheader()
-
+        counter = 0
         for path in firewall_paths:
             try:
                 key = reg.open(path)
             except Registry.RegistryKeyNotFoundException:
-                print(f"Couldn't find the key {path}. Continuing...\n")
+                print(yellow(f"Couldn't find the key {path}. Continuing...\n"))
                 continue
 
             for value in key.values():
@@ -1271,18 +1282,20 @@ def get_windows_firewall_rules(mount_path, computer_name):
 
                 # Write the row to CSV, filling missing fields with empty strings
                 writer.writerow({col: rule_dict.get(col, '') for col in csv_columns})
+                counter += 1
 
-    print(f"Firewall rules written to {output_file}")
+    if counter >= 1:
+        print(green(f"Firewall rules written to {output_file}"))
+    else:
+        print(yellow(f"{output_file} should be empty"))
 
 def get_windows_installed_roles(mount_path, computer_name):
-    #chaine = "Windows Installed Roles"
-    #print(bandeau(chaine))
     # Définir le chemin du registre
     output_file = script_path + "/" + result_folder + "/" + "windows_roles.csv"
     #print(f"Role/Feature: {subkey.name()}")
     path_to_reg_hive = os.path.join(mount_path, 'Windows/System32/config/SOFTWARE')
     reg = Registry.Registry(path_to_reg_hive)
-    print("[+] Retrieving Windows Roles informations...")
+    print(yellow("[+] Retrieving Windows Roles informations..."))
 
     # Définir le chemin de la clé de registre pour les rôles et fonctionnalités installés
     key_path = 'Microsoft\\ServerManager\\ServicingStorage\\ServerComponentCache'
@@ -1290,7 +1303,7 @@ def get_windows_installed_roles(mount_path, computer_name):
     try:
         key = reg.open(key_path)
     except Registry.RegistryKeyNotFoundException:
-        print("Couldn't find the key. Exiting...")
+        print(red("[-] Couldn't find the key. Exiting..."))
         return
 
     try:
@@ -1303,7 +1316,6 @@ def get_windows_installed_roles(mount_path, computer_name):
                 role_name = subkey.name()
                 try:
                     if subkey.values():
-                    #print(f"there is value in {role_name}")
                     # Parcourir les valeurs de chaque sous-clé pour trouver 'InstallState'
                         for value in subkey.values():
                             if value.name() == "InstallState":
@@ -1315,80 +1327,15 @@ def get_windows_installed_roles(mount_path, computer_name):
                         writer.writerow({'computer_name': computer_name, 'role_name': role_name, 'install_state': 'No value'})
                 except Exception as e_bis:
                     writer.writerow({'computer_name': computer_name, 'role_name': role_name, 'install_state': 'No value'})
-            print(f"Roles information have been written into {output_file}")
+            print(green(f"Roles information have been written into {output_file}"))
     except Exception as e:
-        print(f"Error retrieving roles information : {e}")
-
-'''
-def get_windows_installed_programs(mount_path, computer_name):
-    installed_programs_paths = [
-        "Microsoft\\Windows\\CurrentVersion\\Uninstall",
-        "WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"
-    ]
-
-    output_file = script_path + "/" + result_folder + "/" + "windows_installed_programs.csv"
-    csv_columns = ['computer_name', 'DisplayName', 'DisplayVersion', 'InstallDate', 'Publisher']
-    print("[+] Retrieving installed programs")
-
-    try:
-        reg = Registry.Registry(os.path.join(mount_path, 'Windows/System32/config/SOFTWARE'))
-    except Exception as e:
-        print(f"Error loading SOFTWARE hive: {e}")
-        return
-
-    with open(output_file, mode='w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=csv_columns)
-        writer.writeheader()
-
-        for path in installed_programs_paths:
-            try:
-                key = reg.open(path)
-            except Registry.RegistryKeyNotFoundException:
-                print(f"Couldn't find the key {path}. Continuing...\n")
-                continue
-
-            try:
-                # Capturer l'erreur lors de la tentative d'accès aux sous-clés
-                subkeys = key.subkeys()
-            except Exception as e:
-                print(f"Error retrieving subkeys from {path}: {e}")
-                continue
-
-            for subkey in subkeys:
-                try:
-                    program_info = {
-                        'computer_name': computer_name,
-                        'DisplayName': '',
-                        'DisplayVersion': '',
-                        'InstallDate': '',
-                        'Publisher': ''
-                    }
-
-                    for value in subkey.values():
-                        if value.name() == 'DisplayName':
-                            program_info['DisplayName'] = value.value()
-                        elif value.name() == 'DisplayVersion':
-                            program_info['DisplayVersion'] = value.value()
-                        elif value.name() == 'InstallDate':
-                            program_info['InstallDate'] = value.value()
-                        elif value.name() == 'Publisher':
-                            program_info['Publisher'] = value.value()
-
-                    if program_info['DisplayName']:  # Only write if there is a program name
-                        writer.writerow(program_info)
-
-                except Exception as subkey_error:
-                    print(f"Error processing subkey {subkey.name()}: {subkey_error}")
-                    continue  # Skip this subkey if there's an issue
-
-    print(f"Installed programs have been written into {output_file}")
-'''
+        print(red(f"[-] Error retrieving roles information : {e}"))
 
 def get_windows_installed_programs(mount_path, computer_name):
     output_file = script_path + "/" + result_folder + "/" + "windows_installed_programs.csv"
     software_file = os.path.join(mount_path, 'Windows/System32/config/SOFTWARE')
     csv_columns = ['computer_name', 'program_name', 'program_version', 'install_date']
-    print("[+] Retrieving installed programs")
+    print(yellow("[+] Retrieving installed programs"))
 
     regripper_path = "/usr/bin/regripper"  # Chemin vers regripper
     try:
@@ -1398,13 +1345,14 @@ def get_windows_installed_programs(mount_path, computer_name):
 
         # Vérifiez si l'output est vide
         if not output.strip():
-            print("[-] No output from regripper.")
+            print(red("[-] No output from regripper."))
             return
 
         # Décomposition de l'output en lignes
         lines = output.splitlines()
         programs = []
         install_date = None
+        counter = 0
 
         # Parcourir les lignes pour extraire les informations
         for line in lines:
@@ -1427,6 +1375,7 @@ def get_windows_installed_programs(mount_path, computer_name):
                         'program_version': program_version,
                         'install_date': install_date
                     })
+                    counter += 1
                 except ValueError:
                     continue  # Ignore toute ligne qui ne correspond pas au format attendu
 
@@ -1436,47 +1385,50 @@ def get_windows_installed_programs(mount_path, computer_name):
             writer.writeheader()
             writer.writerows(programs)
 
-        print(f"[+] Installed programs have been written into {output_file}")
+        if counter >= 1:
+            print(green(f"[+] Installed programs have been written into {output_file}"))
+        else:
+            print(yellow(f"{output_file} should be empty"))
 
     except Exception as e:
-        print(f"Error running regripper or writing output: {e}")
+        print(red(f"[-] Error running regripper or writing output: {e}"))
         return
 
 
-
 def get_windows_executed_programs(mount_path, computer_name):
-    output_file = script_path + "/" + result_folder + "/" + "windows_executed_programs.csv"
+    output_file = os.path.join(script_path, result_folder, "windows_executed_programs.csv")
     csv_columns = ['computer_name', 'filepath', 'executed_date']
-    print("[+] Retrieving executed programs")
-    amcache_path = mount_path + "Windows/AppCompat/Programs/Amcache.hve"
+    print(yellow("[+] Retrieving executed programs"))
 
     possible_amcache_path = [
-        "Windows/AppCompat/Programs/Amcache.hve"
+        "Windows/AppCompat/Programs/Amcache.hve",
         "Windows/appcompat/Programs/Amcache.hve"
     ]
 
+    # Parcourt tous les chemins possibles pour Amcache
     for amcache in possible_amcache_path:
-        amcache_path = mount_path + amcache
+        amcache_path = os.path.join(mount_path, amcache)
+        
         if os.path.exists(amcache_path):
-            # Ouvrir le fichier de registre Amcache.hve
             try:
                 reg = Registry.Registry(amcache_path)
             except Exception as e:
-                print(f"Error opening Amcache.hve: {e}")
-                continue
-    
-            # Ouvrir la clé Root\File qui contient les informations sur les exécutables
+                print(red(f"Error opening Amcache.hve at {amcache_path}: {e}"))
+                continue  # Passe au prochain chemin si erreur lors de l'ouverture
+
             try:
                 key = reg.open("Root\\File")
             except Registry.RegistryKeyNotFoundException:
-                print("Couldn't find the Amcache key. Exiting...")
-                return
-    
+                print(yellow("Couldn't find the Amcache key in", amcache_path))
+                continue  # Passe au prochain chemin si la clé n'est pas trouvée
+
+            # Écriture dans le fichier CSV pour chaque clé trouvée
             with open(output_file, mode='a', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=csv_columns)
                 writer.writeheader()
+                counter = 0
+                
                 try:
-                    # Parcourir et lister les sous-clés de Root\File
                     for subkey in key.subkeys():
                         program_info = {
                             'computer_name': computer_name,
@@ -1484,29 +1436,28 @@ def get_windows_executed_programs(mount_path, computer_name):
                             'executed_date': ''
                         }
                         try:
-                            # Parcourir et lister les sous-clés de cette sous-clé
                             for sub_subkey in subkey.subkeys():
                                 for value in sub_subkey.values():
-                                    # print(f"{value.name()}")
-                                    # print(f"{value.value()}")
                                     if value.name() == "17":
-                                        win_timestamp = (value.value())
-                                        #print("Executed date: " + str(get_windows_timestamp(win_timestamp)))
+                                        win_timestamp = value.value()
                                         program_info['executed_date'] = str(get_windows_timestamp(win_timestamp))
-                                    if value.name() == "15":
-                                        #print(f"Filepath : {value.value()}")
-                                        program_info['filepath'] = (value.value())
+                                    elif value.name() == "15":
+                                        program_info['filepath'] = value.value()
                                 if program_info['filepath']:
                                     writer.writerow(program_info)
+                                    counter += 1
                         except Registry.RegistryKeyNotFoundException as e:
-                            print(f"Error accessing subkeys of {subkey.name()}: {e}")
+                            print(red(f"[-]Error accessing subkeys of {subkey.name()}: {e}"))
                             continue
                 except Exception as e:
-                    print(f"problem retrieving executed program elements : {e}")
+                    print(red(f"[-] Problem retrieving executed program elements: {e}"))
         else:
-            continue
-    
-    print(f"Executed programs have been written into {output_file}")
+            print(yellow(f"{amcache_path} not found, moving to the next path."))
+
+    if counter >= 1:
+        print(green(f"Executed programs have been written into {output_file}"))
+    else:
+        print(yellow(f"{output_file} should be empty"))
 
 
 def convert_chrome_time(chrome_timestamp):
@@ -1521,14 +1472,14 @@ def convert_firefox_time(firefox_timestamp):
 def get_windows_browsing_history(mount_path, computer_name):
     output_file = script_path + "/" + result_folder + "/" + "windows_browsing_history.csv"
     csv_columns = ['computer_name', 'source', 'user', 'link', 'search_date']
-    print("[+] Retrieving browsing history")
+    print(yellow("[+] Retrieving browsing history"))
     temp_file = "/tmp/places_temp.sqlite"
 
     # Ouvrir le fichier CSV pour écrire les résultats
     with open(output_file, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=csv_columns)
         writer.writeheader()
-
+        counter = 0
         # Parcourir les utilisateurs dans le répertoire Users
         users_dir = os.path.join(mount_path, 'Users')
         for user in os.listdir(users_dir):
@@ -1555,10 +1506,11 @@ def get_windows_browsing_history(mount_path, computer_name):
                             'link': url,
                             'search_date': visit_date
                         })
+                        counter += 1
 
                     conn.close()
                 except Exception as e:
-                    print(f"Error processing Chrome history: {e}")
+                    print(red(f"Error processing Chrome history: {e}"))
 
             #2. Firefox
             firefox_profile_dir = os.path.join(user_dir, 'AppData/Roaming/Mozilla/Firefox/Profiles')
@@ -1566,11 +1518,11 @@ def get_windows_browsing_history(mount_path, computer_name):
                 for profile in os.listdir(firefox_profile_dir):
                     places_db = os.path.join(firefox_profile_dir, profile, 'places.sqlite')
                     if os.path.exists(places_db):
-                        print(f"[+] Firefox file found: {places_db}")
+                        #print(f"[+] Firefox file found: {places_db}")
                         try:
                             # Copier le fichier places.sqlite dans /tmp
                             shutil.copyfile(places_db, temp_file)
-                            print(f"[+] Copied Firefox history to temporary file: {temp_file}")
+                            #print(f"[+] Copied Firefox history to temporary file: {temp_file}")
 
                             # Connexion à la copie temporaire de la base de données Firefox
                             conn = sqlite3.connect(temp_file)
@@ -1593,30 +1545,33 @@ def get_windows_browsing_history(mount_path, computer_name):
                                     'link': url,
                                     'search_date': visit_date
                                 })
+                                counter += 1
 
                             # Fermer la connexion à la base de données
                             conn.close()
-                            print(f"Browsing history has been written into {output_file}")
 
                         except Exception as e:
-                            print(f"Error processing Firefox history: {e}")
+                            print(red(f"Error processing Firefox history: {e}"))
 
                         finally:
                             if os.path.exists(temp_file):
                                 os.remove(temp_file)
-                                print(f"[+] Temporary file {temp_file} has been deleted.")
-
-    print(f"Browsing history has been written into {output_file}")
+                                #print(f"[+] Temporary file {temp_file} has been deleted.")
+    if counter >= 1:
+        print(green(f"Browsing history has been written into {output_file}"))
+    else:
+        print(yellow(f"Browsing history {output_file} should be empty"))
 
 
 def get_windows_browsing_data(mount_path, computer_name):
     output_file = script_path + "/" + result_folder + "/" + "windows_browsing_data.csv"
     csv_columns = ['computer_name', 'source', 'user', 'ident', 'creds', 'platform', 'saved_date']
-    print("[+] Retrieving browsing data (saved logins)")
+    print(yellow("[+] Retrieving browsing data (saved logins)"))
     
     with open(output_file, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=csv_columns)
         writer.writeheader()
+        counter = 0
 
         users_dir = os.path.join(mount_path, 'Users')
         for user in os.listdir(users_dir):
@@ -1643,10 +1598,11 @@ def get_windows_browsing_data(mount_path, computer_name):
                             'platform': url,
                             'saved_date': saved_date
                         })
+                        counter += 1
 
                     conn.close()
                 except Exception as e:
-                    print(f"Error processing Chrome logins for user {user}: {e}")
+                    print(red(f"[-] Error processing Chrome logins for user {user}: {e}"))
 
             # 2. Mozilla Firefox logins
             firefox_login_path = os.path.join(user_dir, 'AppData/Roaming/Mozilla/Firefox/Profiles')
@@ -1667,11 +1623,16 @@ def get_windows_browsing_data(mount_path, computer_name):
                                         'platform': login['hostname'],
                                         'saved_date': datetime.fromtimestamp(login['timeCreated'] / 1000).isoformat()
                                     })
+                                    counter += 1
 
                 except Exception as e:
-                    print(f"Error processing Firefox logins for user {user}: {e}")
+                    print(red(f"[-] Error processing Firefox logins for user {user}: {e}"))
 
-    print(f"Browsing data has been written into {output_file}")
+    if counter >= 1:
+        print(green(f"Browsing data has been written into {output_file}"))
+    else:
+        print(yellow(f"Browsing data {output_file} should be empty"))
+
 
 def hayabusa_evtx(mount_path, computer_name):
     hayabusa_path = script_path + "/hayabusa/hayabusa"
@@ -1693,7 +1654,6 @@ def hayabusa_evtx(mount_path, computer_name):
             print(f"[-] Hayabusa executable has to be in {script_path} folder.")
             
  
-
 def get_crypto(mount_path, computer_name):
     run_find_crypto = input("Do you want to launch some crypto research? It will be quite long? (yes/no): ").strip().lower()
 
@@ -1706,11 +1666,11 @@ def get_crypto(mount_path, computer_name):
         # Regex patterns for wallet addresses
         wallet_patterns = {
             'Bitcoin': r"\b([13][a-km-zA-HJ-NP-Z1-9]{25,34})|bc(0([ac-hj-np-z02-9]{39}|[ac-hj-np-z02-9]{59})|1[ac-hj-np-z02-9]{8,87})\b",
-            # 'Monero': r'\b4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}\b',
-            # 'Litecoin': r'\b[L3][a-km-zA-HJ-NP-Z1-9]{26,33}\b',
+             'Monero': r'\b4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}\b',
+             'Litecoin': r'\b[L3][a-km-zA-HJ-NP-Z1-9]{26,33}\b',
         }
 
-        print("[+] Launching Crypto research. It may take several minutes...")
+        print(yellow("[+] Launching Crypto research. It may take several minutes..."))
 
         # Search for folders
         for folder in folder_to_search:
@@ -1719,51 +1679,55 @@ def get_crypto(mount_path, computer_name):
             result_find_dir = subprocess.run(find_dir_cmd, shell=True, capture_output=True, text=True)
             output = result_find_dir.stdout
             if output:
-                print(f"[+] Result found for {folder} !")
+                print(green(f"[+] Result found for {folder} !"))
                 print(output)
 
-        print("[-] No crypto folders found... Looking for files")
+        print(yellow("No crypto folders found... Looking for files"))
+
         # Search for specific files
         for file in files_to_search:
-            print(f"Looking for {file} in all the filesystem")
             find_file_cmd = f"find {mount_path} -type f -name {file}"
             result_find_file = subprocess.run(find_file_cmd, shell=True, capture_output=True, text=True)
             output = result_find_file.stdout
             if output:
-                print(f"[+] Result found for {file} !")
+                print(green(f"[+] Result found for {file} !"))
                 print(output)
 
-        print("[-] Looking for wallet addresses inside common text and database files...")
+        print(yellow("Looking for wallet addresses inside common text and database files..."))
 
         # Search for wallet addresses in text and database files
         file_types_to_search = ["*.txt", "*.sqlite", "*.db"]
-        for pattern_name, regex_pattern in wallet_patterns.items():
-            compiled_pattern = re.compile(regex_pattern)
-            print(f"Searching for {pattern_name} wallet addresses with pattern: {regex_pattern}")
+        csv_columns = ['computer_name', 'crypto', 'wallet']
 
-            for file_type in file_types_to_search:
-                find_file_type_cmd = f"find {mount_path} -type f -name '{file_type}'"
-                result_find_type = subprocess.run(find_file_type_cmd, shell=True, capture_output=True, text=True)
-                files = result_find_type.stdout.strip().splitlines()
+        with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=csv_columns)
+            writer.writeheader()
 
-                for file_path in files:
-                    try:
-                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                            content = f.read()
-                            matches = compiled_pattern.findall(content)
-                            match_count = len(matches)
+            for pattern_name, regex_pattern in wallet_patterns.items():
+                compiled_pattern = re.compile(regex_pattern)
+                print(f"Searching for {pattern_name} wallet addresses with pattern: {regex_pattern}")
 
-                            # Only include the file if match count is 2 or less
-                            if 0 < match_count <= 2:
-                                print(f"[+] {pattern_name} wallet address(es) found in {file_path}: {matches}")
-                                with open(output_file, "a") as out_file:
+                for file_type in file_types_to_search:
+                    find_file_type_cmd = f"find {mount_path} -type f -name '{file_type}'"
+                    result_find_type = subprocess.run(find_file_type_cmd, shell=True, capture_output=True, text=True)
+                    files = result_find_type.stdout.strip().splitlines()
+
+                    for file_path in files:
+                        try:
+                            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f_content:
+                                content = f_content.read()
+                                matches = compiled_pattern.findall(content)
+                                match_count = len(matches)
+
+                                # Enregistrement si 1-2 correspondances; noter les fichiers avec plus de 2 correspondances
+                                if 0 < match_count <= 2:
+                                    print(green(f"[+] {pattern_name} wallet address(es) found in {file_path}: {matches}"))
                                     for match in matches:
-                                        out_file.write(f"{computer_name},{file_path},{pattern_name},{match}\n")
-                            elif match_count > 2:
-                                print(f"[-] Skipping {file_path} due to high match count ({match_count}).")
-
-                    except Exception as e:
-                        print(f"[-] Error reading file {file_path}: {e}")
+                                        writer.writerow({'computer_name': computer_name, 'crypto': pattern_name, 'wallet': match})
+                                elif match_count >= 3:
+                                    print(yellow(f"[!] {file_path} contains more than 2 addresses, skipped."))
+                        except Exception as e:
+                            print(red(f"[-] Error reading file {file_path}: {e}"))
 
         print("[+] Crypto wallet address search completed.")
 
@@ -1831,7 +1795,7 @@ if len(sys.argv) > 1:
             get_windows_browsing_history(mount_path, computer_name)
             get_windows_browsing_data(mount_path, computer_name)
             hayabusa_evtx(mount_path, computer_name)
-            #get_crypto(mount_path, computer_name)
+            get_crypto(mount_path, computer_name)
             #extract_windows_evtx
         else:
             print("Unknown OS")
