@@ -1393,8 +1393,7 @@ def get_windows_installed_programs(mount_path, computer_name):
     except Exception as e:
         print(red(f"[-] Error running regripper or writing output: {e}"))
         return
-
-
+'''
 def get_windows_executed_programs(mount_path, computer_name):
     output_file = os.path.join(script_path, result_folder, "windows_executed_programs.csv")
     csv_columns = ['computer_name', 'filepath', 'executed_date']
@@ -1404,11 +1403,10 @@ def get_windows_executed_programs(mount_path, computer_name):
         "Windows/AppCompat/Programs/Amcache.hve",
         "Windows/appcompat/Programs/Amcache.hve"
     ]
-
+    counter = 0
     # Parcourt tous les chemins possibles pour Amcache
     for amcache in possible_amcache_path:
         amcache_path = os.path.join(mount_path, amcache)
-        
         if os.path.exists(amcache_path):
             try:
                 reg = Registry.Registry(amcache_path)
@@ -1419,14 +1417,13 @@ def get_windows_executed_programs(mount_path, computer_name):
             try:
                 key = reg.open("Root\\File")
             except Registry.RegistryKeyNotFoundException:
-                print(yellow("Couldn't find the Amcache key in", amcache_path))
+                print(yellow(f"Couldn't find the Amcache key in {amcache_path} "))
                 continue  # Passe au prochain chemin si la clé n'est pas trouvée
 
             # Écriture dans le fichier CSV pour chaque clé trouvée
             with open(output_file, mode='a', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=csv_columns)
                 writer.writeheader()
-                counter = 0
                 
                 try:
                     for subkey in key.subkeys():
@@ -1458,6 +1455,85 @@ def get_windows_executed_programs(mount_path, computer_name):
         print(green(f"Executed programs have been written into {output_file}"))
     else:
         print(yellow(f"{output_file} should be empty"))
+
+'''
+
+def get_windows_executed_programs(mount_path, computer_name):
+    output_file = os.path.join(script_path, result_folder, "windows_executed_programs.csv")
+    csv_columns = ['computer_name', 'filepath', 'executed_date']
+    print(yellow("[+] Retrieving executed programs"))
+
+    possible_amcache_path = [
+        "Windows/AppCompat/Programs/Amcache.hve",
+        "Windows/appcompat/Programs/Amcache.hve"
+    ]
+    counter = 0
+
+    for amcache in possible_amcache_path:
+        amcache_path = os.path.join(mount_path, amcache)
+        if os.path.exists(amcache_path):
+            try:
+                regripper_path = "/usr/bin/regripper"
+                if os.path.exists(regripper_path):
+                    regripper_cmd = f"{regripper_path} -p amcache -r {amcache_path}"
+                    result_regripper = subprocess.run(regripper_cmd, shell=True, capture_output=True, text=True)
+                    output = result_regripper.stdout
+
+                    if not output.strip():
+                        print(red("[-] No output from regripper."))
+                        return
+
+                    lines = output.splitlines()
+                    with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+                        writer = csv.DictWriter(f, fieldnames=csv_columns)
+                        writer.writeheader()
+                        filepath = ""
+                        executed_date = ""
+                        for line in lines:
+                            line = line.strip()
+
+                            # Format 1: ".exe" and "LastWrite" on the same line
+                            if ".exe" in line and "LastWrite" in line:
+                                parts = line.split("  ")
+                                filepath = parts[0].strip()
+                                executed_date = parts[1].replace("LastWrite: ", "").strip()
+                                writer.writerow({
+                                    'computer_name': computer_name,
+                                    'filepath': filepath,
+                                    'executed_date': executed_date
+                                })
+                                counter += 1
+
+                            # Format 2: Detected by "File Reference" line
+                            elif line.startswith("File Reference:"):
+                                filepath = ""
+                                executed_date = ""
+
+                            if "LastWrite" in line:
+                                executed_date = line.split(":", 1)[1].strip()
+                            elif "Path" in line:
+                                filepath = line.split(":", 1)[1].strip()
+
+                            # Write entry if both fields are populated
+                            if filepath and executed_date:
+                                print(yellow("both are populated"))
+                                writer.writerow({
+                                    'computer_name': computer_name,
+                                    'filepath': filepath,
+                                    'executed_date': executed_date
+                                })
+                                counter += 1
+                                filepath = None
+                                executed_date = None
+
+                if counter >= 1:
+                    print(green(f"[+] Executed programs information have been written into {output_file}"))
+                else:
+                    print(yellow(f"[!] {output_file} should be empty"))
+
+            except Exception as e:
+                print(red(f"Error opening Amcache.hve at {amcache_path}: {e}"))
+                continue
 
 
 def convert_chrome_time(chrome_timestamp):
