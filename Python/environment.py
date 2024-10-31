@@ -1730,7 +1730,7 @@ def hayabusa_evtx(mount_path, computer_name):
             
  
 def get_files_of_interest(mount_path, computer_name):
-    run_find_crypto = input("Do you want to launch some crypto research? It will be quite long? (yes/no): ").strip().lower()
+    run_find_crypto = input("Do you want to launch some files of interest research? It will be quite long? (yes/no): ").strip().lower()
 
     if run_find_crypto == "yes":
         output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
@@ -1743,8 +1743,7 @@ def get_files_of_interest(mount_path, computer_name):
             if os.path.exists(yara_rule):
                 yara_cmd = f"yara -w -s -r {yara_rule}"
             else:
-                print(yellow("Yara rule doesn't exist, going to create it"))
-                yara_cmd = f"yara -w -s -r {yara_rule}"
+                print(red(f"Yara rule {yara_rule} doesn't exist, research will exit."))
 
                 with open(yara_rule, "w") as file:
                     file.write(rule_content)
@@ -1779,12 +1778,13 @@ def get_files_of_interest(mount_path, computer_name):
                 writer = csv.DictWriter(f, fieldnames=csv_columns)
                 writer.writeheader()
                 source_file = ""
+                unique_entries = set()
                 for file_type in file_types_to_search:
                     print(f"Looking for files of interest into {file_type} with YARA.")
                     find_file_type_cmd = f"find {mount_path} -type f -name '{file_type}' -exec {yara_cmd} {{}} \\;"
-                    print(f"Launching cmd : {find_file_type_cmd}")
+                    # print(f"Launching cmd : {find_file_type_cmd}")
                     result_find_type = subprocess.run(find_file_type_cmd, shell=True, capture_output=True, text=True)
-                    print(result_find_type)
+                    #print(result_find_type)
                     clean_output = result_find_type.stdout.replace(r'\n', '\n')
                     lines = clean_output.splitlines()
 
@@ -1793,11 +1793,18 @@ def get_files_of_interest(mount_path, computer_name):
                             source_file = line.split(" ", 1)[1]
                         elif source_file:
                             match_info = re.match(r"0x[\da-f]+:\$(\w+): (.+)", line)
-                            print(match_info)
                             if match_info:
                                 tag_type = match_info.group(1)
                                 matched_string = match_info.group(2)
-                                writer.writerow({"computer_name": computer_name, "type": tag_type, "match": matched_string, "source_file": source_file})
+                                entry = (computer_name, tag_type, matched_string, source_file)
+                                if entry not in unique_entries:
+                                    unique_entries.add(entry)
+                                    writer.writerow({
+                                        "computer_name": computer_name,
+                                        "type": tag_type,
+                                        "match": matched_string,
+                                        "source_file": source_file
+                                    })
 
         else:
             print(red("[-] Yara has to be installed on your system."))
