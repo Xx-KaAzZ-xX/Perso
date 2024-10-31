@@ -1516,7 +1516,6 @@ def get_windows_executed_programs(mount_path, computer_name):
 
                             # Write entry if both fields are populated
                             if filepath and executed_date:
-                                print(yellow("both are populated"))
                                 writer.writerow({
                                     'computer_name': computer_name,
                                     'filepath': filepath,
@@ -1730,83 +1729,80 @@ def hayabusa_evtx(mount_path, computer_name):
             print(f"[-] Hayabusa executable has to be in {script_path} folder.")
             
  
-def get_crypto(mount_path, computer_name):
+def get_files_of_interest(mount_path, computer_name):
     run_find_crypto = input("Do you want to launch some crypto research? It will be quite long? (yes/no): ").strip().lower()
 
     if run_find_crypto == "yes":
-        output_file = f"{script_path}/{result_folder}/crypto.csv"
+        output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
 
-        folder_to_search = ['.bitcoin', '.monero', '.electrum']
+        folder_to_search = ['bitcoin', 'monero']
         files_to_search = ['wallet.dat', 'wallet.keys', 'default_wallet']
+        if os.path.exists('/usr/bin/yara'):
+            print(yellow("[+] Launching Crypto research. It may take several minutes..."))
+            yara_rule = script_path + '/' + 'files_of_interest.yar'
+            if os.path.exists(yara_rule):
+                yara_cmd = f"yara -w -s -r {yara_rule}"
+            else:
+                print(yellow("Yara rule doesn't exist, going to create it"))
+                yara_cmd = f"yara -w -s -r {yara_rule}"
 
-        # Regex patterns for wallet addresses
-        wallet_patterns = {
-            'Bitcoin': r"\b([13][a-km-zA-HJ-NP-Z1-9]{25,34})|bc(0([ac-hj-np-z02-9]{39}|[ac-hj-np-z02-9]{59})|1[ac-hj-np-z02-9]{8,87})\b",
-             'Monero': r'\b4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}\b',
-             'Litecoin': r'\b[L3][a-km-zA-HJ-NP-Z1-9]{26,33}\b',
-        }
+                with open(yara_rule, "w") as file:
+                    file.write(rule_content)
 
-        print(yellow("[+] Launching Crypto research. It may take several minutes..."))
+            # Search for folders
+            for folder in folder_to_search:
+                print(f"Looking for {folder} folder in all the filesystem")
+                find_dir_cmd = f"find {mount_path} -type d -name {folder}"
+                result_find_dir = subprocess.run(find_dir_cmd, shell=True, capture_output=True, text=True)
+                output = result_find_dir.stdout
+                if output:
+                    print(green(f"[+] Result found for {folder} !"))
+                    print(output)
 
-        # Search for folders
-        for folder in folder_to_search:
-            print(f"Looking for {folder} in all the filesystem")
-            find_dir_cmd = f"find {mount_path} -type d -name {folder}"
-            result_find_dir = subprocess.run(find_dir_cmd, shell=True, capture_output=True, text=True)
-            output = result_find_dir.stdout
-            if output:
-                print(green(f"[+] Result found for {folder} !"))
-                print(output)
+            print(yellow("No crypto folders found... Looking for known files"))
 
-        print(yellow("No crypto folders found... Looking for files"))
+            # Search for specific files
+            for file in files_to_search:
+                find_file_cmd = f"find {mount_path} -type f -name {file}"
+                result_find_file = subprocess.run(find_file_cmd, shell=True, capture_output=True, text=True)
+                output = result_find_file.stdout
+                if output:
+                    print(green(f"[+] Result found for {file} !"))
+                    print(output)
 
-        # Search for specific files
-        for file in files_to_search:
-            find_file_cmd = f"find {mount_path} -type f -name {file}"
-            result_find_file = subprocess.run(find_file_cmd, shell=True, capture_output=True, text=True)
-            output = result_find_file.stdout
-            if output:
-                print(green(f"[+] Result found for {file} !"))
-                print(output)
+            
+            # Search for wallet addresses in text and database files
+            file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*_out"]
+            csv_columns = ['computer_name', 'type', 'match', 'source_file']
 
-        print(yellow("Looking for wallet addresses inside common text and database files..."))
-
-        # Search for wallet addresses in text and database files
-        file_types_to_search = ["*.txt", "*.sqlite", "*.db"]
-        csv_columns = ['computer_name', 'crypto', 'wallet']
-
-        with open(output_file, mode='w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=csv_columns)
-            writer.writeheader()
-
-            for pattern_name, regex_pattern in wallet_patterns.items():
-                compiled_pattern = re.compile(regex_pattern)
-                print(f"Searching for {pattern_name} wallet addresses with pattern: {regex_pattern}")
-
+            with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=csv_columns)
+                writer.writeheader()
+                source_file = ""
                 for file_type in file_types_to_search:
-                    find_file_type_cmd = f"find {mount_path} -type f -name '{file_type}'"
+                    print(f"Looking for files of interest into {file_type} with YARA.")
+                    find_file_type_cmd = f"find {mount_path} -type f -name '{file_type}' -exec {yara_cmd} {{}} \\;"
+                    print(f"Launching cmd : {find_file_type_cmd}")
                     result_find_type = subprocess.run(find_file_type_cmd, shell=True, capture_output=True, text=True)
-                    files = result_find_type.stdout.strip().splitlines()
+                    print(result_find_type)
+                    clean_output = result_find_type.stdout.replace(r'\n', '\n')
+                    lines = clean_output.splitlines()
 
-                    for file_path in files:
-                        try:
-                            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f_content:
-                                content = f_content.read()
-                                matches = compiled_pattern.findall(content)
-                                match_count = len(matches)
+                    for line in lines:
+                        if line.startswith("Detect_Files_Of_Interest"):
+                            source_file = line.split(" ", 1)[1]
+                        elif source_file:
+                            match_info = re.match(r"0x[\da-f]+:\$(\w+): (.+)", line)
+                            print(match_info)
+                            if match_info:
+                                tag_type = match_info.group(1)
+                                matched_string = match_info.group(2)
+                                writer.writerow({"computer_name": computer_name, "type": tag_type, "match": matched_string, "source_file": source_file})
 
-                                # Enregistrement si 1-2 correspondances; noter les fichiers avec plus de 2 correspondances
-                                if 0 < match_count <= 2:
-                                    print(green(f"[+] {pattern_name} wallet address(es) found in {file_path}: {matches}"))
-                                    for match in matches:
-                                        writer.writerow({'computer_name': computer_name, 'crypto': pattern_name, 'wallet': match})
-                                elif match_count >= 3:
-                                    print(yellow(f"[!] {file_path} contains more than 2 addresses, skipped."))
-                        except Exception as e:
-                            print(red(f"[-] Error reading file {file_path}: {e}"))
+        else:
+            print(red("[-] Yara has to be installed on your system."))
 
-        print("[+] Crypto wallet address search completed.")
-
+        
 def determine_platform(mount_path):
     linux_indicators = ['etc', 'var', 'usr']
     windows_indicators = ['Windows', 'Program Files', 'Users']
@@ -1857,6 +1853,7 @@ if len(sys.argv) > 1:
             get_linux_browsing_history(mount_path, computer_name)
             get_linux_browsing_data(mount_path, computer_name)
             #create_volatility_profile(mount_path)
+            get_files_of_interest(mount_path, computer_name)
         elif platform == "Windows":
             computer_name = get_windows_machine_name(mount_path)
             get_windows_info(mount_path, computer_name)
@@ -1871,7 +1868,7 @@ if len(sys.argv) > 1:
             get_windows_browsing_history(mount_path, computer_name)
             get_windows_browsing_data(mount_path, computer_name)
             hayabusa_evtx(mount_path, computer_name)
-            get_crypto(mount_path, computer_name)
+            get_files_of_interest(mount_path, computer_name)
             #extract_windows_evtx
         else:
             print("Unknown OS")
