@@ -5,7 +5,7 @@
 #. Requirements : 
 #- hayabusa in the folder of the script
 #- regripper in the folder of the script
-#- python-regristry
+#- python-regristry : https://github.com/williballenthin/python-registry
 
 import platform
 import pandas as pd
@@ -17,6 +17,9 @@ import time
 import yaml
 import gzip
 import json
+import magic
+import math
+from collections import Counter
 import locale
 import subprocess
 from collections import OrderedDict
@@ -24,8 +27,11 @@ from collections import OrderedDict
 from datetime import datetime, timedelta
 import sys
 from pathlib import Path
-from Registry import Registry
-from Evtx.Evtx import Evtx
+try:
+    from Registry import Registry
+except ImportError:
+    print("You must install python-registry here : https://github.com/williballenthin/python-registry")
+#from Evtx.Evtx import Evtx
 from lxml import etree
 import csv
 import shutil
@@ -480,7 +486,7 @@ def list_installed_apps(mount_path, computer_name):
 def list_services(mount_path, computer_name):
     output_file = os.path.join(script_path, result_folder, "linux_services.csv")
     init_path = os.path.join(mount_path, "usr/sbin/init")
-    print("[+] Retrieving Services informations...")
+    print(yellow("[+] Retrieving Services informations..."))
 
     if os.path.exists(init_path):
         init_sys = os.path.basename(os.readlink(init_path))
@@ -490,7 +496,7 @@ def list_services(mount_path, computer_name):
             stdout, stderr = chroot_and_run_command(mount_path, chroot_command)
 
             if stderr:
-                print(f"Erreur: {stderr}")
+                print(red(f"[-] Erreur: {stderr}"))
                 return
 
             # Traitement de la sortie
@@ -511,16 +517,16 @@ def list_services(mount_path, computer_name):
                 csv_writer.writerow(['computer_name', 'service_name', 'status', 'status_at_boot'])  # En-tête
                 csv_writer.writerows(services)
 
-            print(f"Services informations has been written into {output_file}.")
+            print(green(f"Services informations has been written into {output_file}."))
         else:
-            print("Not managed by Systemd")
+            print(yellow("Not managed by Systemd"))
     else:
-        print("System is not managed by Systemd")
+        print(yellow("System is not managed by Systemd"))
 
 
 def get_command_history(mount_path, computer_name):
     output_file = os.path.join(script_path, result_folder, "linux_command_history.csv")
-    print("[+] Retrieving command history ...")
+    print(yellow("[+] Retrieving command history ..."))
     csv_columns = ['computer_name', 'user', 'shell', 'command']
     
     try:
@@ -553,17 +559,18 @@ def get_command_history(mount_path, computer_name):
                                             'command': command
                                         })
                         except Exception as file_error:
-                            print(f"Error reading {history_file_path}: {file_error}")
+                            print(red(f"[-] Error reading {history_file_path}: {file_error}"))
     
     except Exception as e:
-        print(f"Error retrieving command history: {e}")
+        print(red(f"[-] Error retrieving command history: {e}"))
     
-    print(f"Command history has been written into {output_file}") 
+    print(green(f"Command history has been written into {output_file}"))
 
 def get_firewall_rules(mount_path, computer_name):
     output_file = os.path.join(script_path, result_folder, "linux_firewall_rules.csv")
     csv_columns = ['computer_name', 'chain', 'target', 'prot', 'source', 'destination', 'port']
-    print("[+] Retrieving Firewall Rules...")
+    print(yellow("[+] Retrieving Firewall Rules..."))
+    counter = 0
 
     try:
         with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
@@ -575,7 +582,7 @@ def get_firewall_rules(mount_path, computer_name):
             stdout, stderr = chroot_and_run_command(mount_path, iptables_command)
 
             if stderr:
-                print(f"Error running iptables command: {stderr}")
+                print(red(f"[-] Error running iptables command: {stderr}"))
                 return
 
             rules = []
@@ -627,86 +634,92 @@ def get_firewall_rules(mount_path, computer_name):
                     'destination': destination,
                     'port': port  # À adapter si nécessaire
                 })
+                counter += 1
 
             # Écrire les règles dans le fichier CSV
             writer.writerows(rules)
-            print(f"Firewall rules have been written into {output_file}")
+            if counter >= 1:
+                print(green(f"Firewall rules have been written into {output_file}"))
+            else:
+                print(yellow(f"No rules have been found, {output_file} should be empty"))
 
     except Exception as e:
-        print(f"An error occurred: {e}")
+        print(red(f"[-] An error occurred: {e}"))
 
 
 def get_linux_browsing_history(mount_path, computer_name):
     output_file = script_path + "/" + result_folder + "/" + "linux_browsing_history.csv"
     csv_columns = ['computer_name', 'source', 'user', 'link', 'search_date']
-    print("[+] Retrieving browsing history")
+    print(yellow("[+] Retrieving browsing history"))
+    with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=csv_columns)
+        writer.writeheader()
+        users_dir = os.path.join(mount_path, 'home')
+        for user in os.listdir(users_dir):
+            user_dir = os.path.join(users_dir, user)
+            find_firefox_cmd = f"find {user_dir} -type f -name 'places.sqlite' "
+            stdout, stderr = chroot_and_run_command(mount_path, find_firefox_cmd)
+            firefox_files = stdout.splitlines()
+            print(firefox_files)
+       
+            for firefox_file in firefox_files:
+                if not firefox_file:
+                    print(red("[-] No Firefox profile found."))
+                    return
+                # Chemin du fichier temporaire
+                temp_file = "/tmp/places_temp.sqlite"
 
-    find_firefox_cmd = 'find . -type f -name "places.sqlite" '
-    stdout, stderr = chroot_and_run_command(mount_path, find_firefox_cmd)
-    firefox_file = stdout.strip()
+                # Chemin complet du fichier 'places.sqlite' à partir de l'image montée
+                firefox_profile_file = os.path.join(mount_path, firefox_file)
+                firefox_profile_file = os.path.normpath(firefox_profile_file)
 
-    # Chemin du fichier temporaire
-    temp_file = "/tmp/places_temp.sqlite"
+                try:
+                    # Copier le fichier places.sqlite dans /tmp
+                    shutil.copyfile(firefox_profile_file, temp_file)
+                    print(yellow(f"[+] Copied Firefox history to temporary file: {temp_file}"))
 
-    if not firefox_file:
-        print("[-] No Firefox profile found.")
-        return
+                    # Ouvrir le fichier CSV pour écrire les résultats
+                    # Connexion à la copie temporaire de la base de données Firefox
+                    conn = sqlite3.connect(temp_file)
+                    cursor = conn.cursor()
 
-    # Chemin complet du fichier 'places.sqlite' à partir de l'image montée
-    firefox_profile_file = os.path.join(mount_path, firefox_file)
-    firefox_profile_file = os.path.normpath(firefox_profile_file)
+                    # Requête pour récupérer l'historique de navigation
+                    cursor.execute("""
+                        SELECT moz_places.url, moz_historyvisits.visit_date
+                        FROM moz_places, moz_historyvisits
+                        WHERE moz_places.id = moz_historyvisits.place_id
+                    """)
+                    firefox_rows = cursor.fetchall()
 
-    try:
-        # Copier le fichier places.sqlite dans /tmp
-        shutil.copyfile(firefox_profile_file, temp_file)
-        print(f"[+] Copied Firefox history to temporary file: {temp_file}")
+                    # Traiter les résultats et les écrire dans le fichier CSV
+                    for row in firefox_rows:
+                        url, visit_time = row
+                        visit_date = convert_firefox_time(visit_time)
+                        writer.writerow({
+                            'computer_name': computer_name,
+                            'source': 'Firefox',
+                            'user': user,  # Ajuste le nom de l'utilisateur si nécessaire
+                            'link': url,
+                            'search_date': visit_date
+                        })
 
-        # Ouvrir le fichier CSV pour écrire les résultats
-        with open(output_file, mode='w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=csv_columns)
-            writer.writeheader()
+                        # Fermer la connexion à la base de données
+                    conn.close()
+                    print(green(f"Browsing history has been written into {output_file}"))
 
-            # Connexion à la copie temporaire de la base de données Firefox
-            conn = sqlite3.connect(temp_file)
-            cursor = conn.cursor()
+                except Exception as e:
+                    print(red(f"[-] Error processing Firefox history: {e}"))
 
-            # Requête pour récupérer l'historique de navigation
-            cursor.execute("""
-                SELECT moz_places.url, moz_historyvisits.visit_date
-                FROM moz_places, moz_historyvisits
-                WHERE moz_places.id = moz_historyvisits.place_id
-            """)
-            firefox_rows = cursor.fetchall()
-
-            # Traiter les résultats et les écrire dans le fichier CSV
-            for row in firefox_rows:
-                url, visit_time = row
-                visit_date = convert_firefox_time(visit_time)
-                writer.writerow({
-                    'computer_name': computer_name,
-                    'source': 'Firefox',
-                    'user': 'kasper',  # Ajuste le nom de l'utilisateur si nécessaire
-                    'link': url,
-                    'search_date': visit_date
-                })
-
-            # Fermer la connexion à la base de données
-            conn.close()
-            print(f"Browsing history has been written into {output_file}")
-
-    except Exception as e:
-        print(f"Error processing Firefox history: {e}")
-
-    finally:
-        # Supprimer le fichier temporaire après utilisation
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
-            print(f"[+] Temporary file {temp_file} has been deleted.")
+                finally:
+                    # Supprimer le fichier temporaire après utilisation
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
+                        print(yellow(f"[+] Temporary file {temp_file} has been deleted."))
 
 def get_linux_browsing_data(mount_path, computer_name):
     output_file = script_path + "/" + result_folder + "/" + "linux_browsing_data.csv"
     csv_columns = ['computer_name', 'source', 'user', 'ident', 'creds', 'platform', 'saved_date']
-    print("[+] Retrieving browsing data (saved logins)")
+    print(yellow("[+] Retrieving browsing data (saved logins)"))
 
     with open(output_file, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=csv_columns)
@@ -740,7 +753,7 @@ def get_linux_browsing_data(mount_path, computer_name):
 
                     conn.close()
                 except Exception as e:
-                    print(f"Error processing Chrome logins for user {user}: {e}")
+                    print(red(f"[-] Error processing Chrome logins for user {user}: {e}"))
 
             # 2. Mozilla Firefox logins
             firefox_profile_dir = os.path.join(user_dir, '.mozilla/firefox')
@@ -765,9 +778,9 @@ def get_linux_browsing_data(mount_path, computer_name):
                                         })
 
                 except Exception as e:
-                    print(f"Error processing Firefox logins for user {user}: {e}")
+                    print(red(f"[-] Error processing Firefox logins for user {user}: {e}"))
 
-    print(f"Browsing data has been written into {output_file}")
+    print(green(f"Browsing data has been written into {output_file}"))
 
 def get_linux_used_space(mount_path, computer_name):
     output_file = os.path.join(script_path, result_folder, "linux_disk_usage.csv")
@@ -798,10 +811,10 @@ def get_linux_used_space(mount_path, computer_name):
                     'directory': directory,
                     'percent_used' : percentage_truncated
                     })
-        print(f"Disk usage information has been written to {output_file}")
+        print(green(f"Disk usage information has been written to {output_file}"))
         
     except Exception as e:
-        print(f"An error occurred while gathering disk usage information: {e}")
+        print(red(f"[-] An error occurred while gathering disk usage information: {e}"))
 
 def get_windows_machine_name(mount_path):
     #chaine = "Informations du système Windows"
@@ -1727,8 +1740,34 @@ def hayabusa_evtx(mount_path, computer_name):
 
         else:
             print(f"[-] Hayabusa executable has to be in {script_path} folder.")
-            
- 
+
+
+## This 3 functions are meant to detect VeraCrypt Container
+
+
+def has_no_signature(file_path):
+    # Utilise la bibliothèque `magic` pour récupérer le type MIME du fichier
+    f = magic.Magic(mime=True)
+    file_type = f.from_file(file_path)
+
+    # Vérifie si le type MIME est générique, indiquant potentiellement un fichier sans signature
+    if file_type == "application/octet-stream":
+        return True  # Pas de signature identifiable
+    else:
+        return False
+
+def is_size_divisible_by_512(file_path):
+    file_size = os.path.getsize(file_path)
+    return file_size % 512 == 0
+
+def calculate_entropy(data):
+    if not data:
+        return 0
+    frequency = Counter(data)
+    data_length = len(data)
+    entropy_value = -sum((count / data_length) * math.log2(count / data_length) for count in frequency.values())
+    return entropy_value
+
 def get_files_of_interest(mount_path, computer_name):
     run_find_crypto = input("Do you want to launch some files of interest research? It will be quite long? (yes/no): ").strip().lower()
 
@@ -1736,17 +1775,15 @@ def get_files_of_interest(mount_path, computer_name):
         output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
 
         folder_to_search = ['bitcoin', 'monero']
-        files_to_search = ['wallet.dat', 'wallet.keys', 'default_wallet']
+        files_to_search = ['wallet.dat', 'wallet.keys', 'default_wallet', "*.kdbx"]
         if os.path.exists('/usr/bin/yara'):
             print(yellow("[+] Launching Crypto research. It may take several minutes..."))
             yara_rule = script_path + '/' + 'files_of_interest.yar'
             if os.path.exists(yara_rule):
                 yara_cmd = f"yara -w -s -r {yara_rule}"
             else:
-                print(red(f"Yara rule {yara_rule} doesn't exist, research will exit."))
-
-                with open(yara_rule, "w") as file:
-                    file.write(rule_content)
+                print(red(f"Yara rule {yara_rule} doesn't exist, you have to create it before launching the research. Script will exit."))
+                sys.exit(1)
 
             # Search for folders
             for folder in folder_to_search:
@@ -1771,20 +1808,21 @@ def get_files_of_interest(mount_path, computer_name):
 
             
             # Search for wallet addresses in text and database files
-            file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*_out"]
+            file_types_to_search = ["*.txt", "*.exe", "*.exe_"]
             csv_columns = ['computer_name', 'type', 'match', 'source_file']
 
             with open(output_file, mode='w', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=csv_columns)
                 writer.writeheader()
                 source_file = ""
+                counter = 0
                 unique_entries = set()
                 for file_type in file_types_to_search:
                     print(f"Looking for files of interest into {file_type} with YARA.")
                     find_file_type_cmd = f"find {mount_path} -type f -name '{file_type}' -exec {yara_cmd} {{}} \\;"
                     # print(f"Launching cmd : {find_file_type_cmd}")
                     result_find_type = subprocess.run(find_file_type_cmd, shell=True, capture_output=True, text=True)
-                    #print(result_find_type)
+                                        #print(result_find_type)
                     clean_output = result_find_type.stdout.replace(r'\n', '\n')
                     lines = clean_output.splitlines()
 
@@ -1805,6 +1843,56 @@ def get_files_of_interest(mount_path, computer_name):
                                         "match": matched_string,
                                         "source_file": source_file
                                     })
+                                    counter += 1
+                find_file_without_extension_cmd = f"find {mount_path} -type f ! -name \"*.*\"-type f ! -name \"*.*\" -exec {yara_cmd} {{}} \\;"
+                print(f"Looking for files of interest without extension with YARA")
+                result_find_without_extension = subprocess.run(find_file_without_extension_cmd, shell=True, capture_output=True, text=True)
+                clean_output2 = result_find_without_extension.stdout.replace(r'\n', '\n')
+                lines2 = clean_output2.splitlines()
+                for line2 in lines2:
+                    if line2.startswith("Detect_Files_Of_Interest"):
+                        source_file = line2.split(" ", 1)[1]
+                    elif source_file:
+                        match_info = re.match(r"0x[\da-f]+:\$(\w+): (.+)", line2)
+                        if match_info:
+                            tag_type = match_info.group(1)
+                            matched_string = match_info.group(2)
+                            entry = (computer_name, tag_type, matched_string, source_file)
+                            if entry not in unique_entries:
+                                unique_entries.add(entry)
+                                writer.writerow({
+                                    "computer_name": computer_name,
+                                    "type": tag_type,
+                                    "match": matched_string,
+                                    "source_file": source_file
+                                })
+                                counter += 1
+                ## Detect VeraCrypt container; File has to be larger than 1GB, without signature and a large entropy
+                print("Looking now for Veracrypt container on the FileSystem...")
+                min_size = 1 * 1024**3 #1Go min
+                find_vc_cmd = f"find {mount_path} -type f -size +{min_size // 1024}k"
+                result = subprocess.run(find_vc_cmd, shell=True, capture_output=True, text=True)
+                large_files = result.stdout.splitlines()
+                print(large_files)
+                if large_files != "":
+                    for file_path in large_files:
+                        print(f"Testing signature of {file_path}")
+                        if has_no_signature(file_path) and is_size_divisible_by_512(file_path):
+                            print(f"Calculing entropy for {file_path}")
+                            file_entropy = calculate_entropy(file_path)
+                            print(f"entropy of {file_path} is : {file_entropy}")
+                            if file_entropy > 3.1:
+                                writer.writerow({"computer_name": computer_name, "type": "potential_veracrypt_container", "match": "", "source_file": file_path})
+                                counter += 1
+                else:
+                    print(yellow("No VeraCrypt container found"))
+
+            if counter >= 1:
+                print(green(f"[+] Files of interest have been written into {output_file}"))
+            else:
+                print(yellow(f"{output_file} should be empty."))
+
+
 
         else:
             print(red("[-] Yara has to be installed on your system."))
