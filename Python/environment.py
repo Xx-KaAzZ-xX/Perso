@@ -172,7 +172,7 @@ def get_system_info(mount_path):
                 'last_event': last_event
             })
 
-        print(green(f"[92m System information has been written to {output_file}"))
+        print(green(f"System information has been written to {output_file}"))
         return computer_name
 
     except Exception as e:
@@ -181,7 +181,7 @@ def get_system_info(mount_path):
 def get_network_info(mount_path, computer_name):
 
     output_file = script_path + "/" + result_folder + "/linux_network_info.csv"
-    print("[+] Retrieving Network information...")
+    print(yellow("[+] Retrieving Network information..."))
     # Chemins potentiels pour les fichiers de configuration réseau
     interfaces_file = os.path.join(mount_path, "etc/network/interfaces")
     netplan_dir = os.path.join(mount_path, "etc/netplan/")
@@ -660,7 +660,6 @@ def get_linux_browsing_history(mount_path, computer_name):
             find_firefox_cmd = f"find {user_dir} -type f -name 'places.sqlite' "
             stdout, stderr = chroot_and_run_command(mount_path, find_firefox_cmd)
             firefox_files = stdout.splitlines()
-            print(firefox_files)
        
             for firefox_file in firefox_files:
                 if not firefox_file:
@@ -724,6 +723,7 @@ def get_linux_browsing_data(mount_path, computer_name):
     with open(output_file, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=csv_columns)
         writer.writeheader()
+        counter = 0
 
         users_dir = os.path.join(mount_path, 'home')
         for user in os.listdir(users_dir):
@@ -750,6 +750,7 @@ def get_linux_browsing_data(mount_path, computer_name):
                             'platform': url,
                             'saved_date': saved_date
                         })
+                        counter += 1
 
                     conn.close()
                 except Exception as e:
@@ -776,16 +777,19 @@ def get_linux_browsing_data(mount_path, computer_name):
                                             'platform': login.get('hostname', ''),
                                             'saved_date': datetime.fromtimestamp(login['timeCreated'] / 1000).isoformat()
                                         })
+                                        counter += 1
 
                 except Exception as e:
                     print(red(f"[-] Error processing Firefox logins for user {user}: {e}"))
-
-    print(green(f"Browsing data has been written into {output_file}"))
+    if counter >= 1:
+        print(green(f"Browsing data has been written into {output_file}"))
+    else:
+        print(yellow(f"No browsing data found, {output_file} should be empty"))
 
 def get_linux_used_space(mount_path, computer_name):
     output_file = os.path.join(script_path, result_folder, "linux_disk_usage.csv")
     csv_columns = ['computer_name', 'directory', 'percent_used']
-    print("[+] Retrieving disk usage ...")
+    print(yellow("[+] Retrieving disk usage ..."))
     
     try:
         # Taille totale de la partition racine (en octets)
@@ -1774,42 +1778,18 @@ def get_files_of_interest(mount_path, computer_name):
     if run_find_crypto == "yes":
         output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
 
-        folder_to_search = ['bitcoin', 'monero']
-        files_to_search = ['wallet.dat', 'wallet.keys', 'default_wallet', "*.kdbx"]
+        files_to_search = ['wallet.*', '*.wallet', "*.kdbx" ]#Simply look for presence
+        file_types_to_search = ["*.txt", "*.exe", "*.exe_"] #Yara search into these ones
+        csv_columns = ['computer_name', 'type', 'match', 'source_file']
+
         if os.path.exists('/usr/bin/yara'):
-            print(yellow("[+] Launching Crypto research. It may take several minutes..."))
+            print(yellow("[+] Launching some research. It may take several minutes..."))
             yara_rule = script_path + '/' + 'files_of_interest.yar'
             if os.path.exists(yara_rule):
                 yara_cmd = f"yara -w -s -r {yara_rule}"
             else:
-                print(red(f"Yara rule {yara_rule} doesn't exist, you have to create it before launching the research. Script will exit."))
+                print(red(f"Yara rule {yara_rule} doesn't exist. Script will exit."))
                 sys.exit(1)
-
-            # Search for folders
-            for folder in folder_to_search:
-                print(f"Looking for {folder} folder in all the filesystem")
-                find_dir_cmd = f"find {mount_path} -type d -name {folder}"
-                result_find_dir = subprocess.run(find_dir_cmd, shell=True, capture_output=True, text=True)
-                output = result_find_dir.stdout
-                if output:
-                    print(green(f"[+] Result found for {folder} !"))
-                    print(output)
-
-            print(yellow("No crypto folders found... Looking for known files"))
-
-            # Search for specific files
-            for file in files_to_search:
-                find_file_cmd = f"find {mount_path} -type f -name {file}"
-                result_find_file = subprocess.run(find_file_cmd, shell=True, capture_output=True, text=True)
-                output = result_find_file.stdout
-                if output:
-                    print(green(f"[+] Result found for {file} !"))
-                    print(output)
-
-            
-            # Search for wallet addresses in text and database files
-            file_types_to_search = ["*.txt", "*.exe", "*.exe_"]
-            csv_columns = ['computer_name', 'type', 'match', 'source_file']
 
             with open(output_file, mode='w', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=csv_columns)
@@ -1817,12 +1797,27 @@ def get_files_of_interest(mount_path, computer_name):
                 source_file = ""
                 counter = 0
                 unique_entries = set()
+
+                # Search for specific files
+                for file in files_to_search:
+                    find_file_cmd = f"find {mount_path} -type f -name {file}"
+                    result_find_file = subprocess.run(find_file_cmd, shell=True, capture_output=True, text=True)
+                    output = result_find_file.stdout
+                    if output:
+                        files_splitted = output.splitlines()
+                        for file_per_line in files_splitted:
+                            if "wallet" in file_per_line:
+                                writer.writerow({"computer_name": computer_name, "type": "potential_wallet", "match": "", "source_file": file_per_line})
+                                counter += 1
+                            elif "kdbx" in file_per_line:
+                                writer.writerow({"computer_name": computer_name, "type": "keepass_file", "match": "", "source_file": file_per_line})
+                                counter += 1
+
+
                 for file_type in file_types_to_search:
                     print(f"Looking for files of interest into {file_type} with YARA.")
                     find_file_type_cmd = f"find {mount_path} -type f -name '{file_type}' -exec {yara_cmd} {{}} \\;"
-                    # print(f"Launching cmd : {find_file_type_cmd}")
                     result_find_type = subprocess.run(find_file_type_cmd, shell=True, capture_output=True, text=True)
-                                        #print(result_find_type)
                     clean_output = result_find_type.stdout.replace(r'\n', '\n')
                     lines = clean_output.splitlines()
 
@@ -1873,26 +1868,27 @@ def get_files_of_interest(mount_path, computer_name):
                 find_vc_cmd = f"find {mount_path} -type f -size +{min_size // 1024}k"
                 result = subprocess.run(find_vc_cmd, shell=True, capture_output=True, text=True)
                 large_files = result.stdout.splitlines()
-                print(large_files)
+                #print(large_files)
                 if large_files != "":
                     for file_path in large_files:
-                        print(f"Testing signature of {file_path}")
+                        #print(f"Testing signature of {file_path}")
+                        #To avoid the pagefile false positive
+                        if "pagefile.sys" in file_path:
+                            continue
                         if has_no_signature(file_path) and is_size_divisible_by_512(file_path):
-                            print(f"Calculing entropy for {file_path}")
+                            #print(f"Calculing entropy for {file_path}")
                             file_entropy = calculate_entropy(file_path)
-                            print(f"entropy of {file_path} is : {file_entropy}")
+                            #print(f"entropy of {file_path} is : {file_entropy}")
                             if file_entropy > 3.1:
                                 writer.writerow({"computer_name": computer_name, "type": "potential_veracrypt_container", "match": "", "source_file": file_path})
                                 counter += 1
                 else:
                     print(yellow("No VeraCrypt container found"))
 
-            if counter >= 1:
-                print(green(f"[+] Files of interest have been written into {output_file}"))
-            else:
-                print(yellow(f"{output_file} should be empty."))
-
-
+                if counter >= 1:
+                    print(green(f"[+] Files of interest have been written into {output_file}"))
+                else:
+                    print(yellow(f"{output_file} should be empty."))
 
         else:
             print(red("[-] Yara has to be installed on your system."))
