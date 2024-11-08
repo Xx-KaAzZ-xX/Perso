@@ -82,3 +82,4 @@ else
     echo "Error: Failed to mount the image."
     exit 1
 fi
+
