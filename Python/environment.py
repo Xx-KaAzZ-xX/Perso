@@ -418,7 +418,7 @@ def list_installed_apps(mount_path, computer_name):
 
             # Pour Debian/Ubuntu
             if distro in ["debian", "ubuntu", "kali"]:
-                chroot_command = "zgrep 'install ' /var/log/dpkg.log* | sort | cut -f1,2,4 -d' '"
+                chroot_command = "zgrep 'install' /var/log/dpkg.log* | sort | cut -f1,2,4 -d' '"
                 result, _ = chroot_and_run_command(mount_path, chroot_command)
 
                 if result:
