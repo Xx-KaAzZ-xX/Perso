@@ -488,7 +488,7 @@ def list_services(mount_path, computer_name):
     output_file = os.path.join(script_path, result_folder, "linux_services.csv")
     init_path = os.path.join(mount_path, "usr/sbin/init")
     print(yellow("[+] Retrieving Services informations..."))
-
+    counter = 0
     if os.path.exists(init_path):
         init_sys = os.path.basename(os.readlink(init_path))
 
@@ -504,21 +504,32 @@ def list_services(mount_path, computer_name):
             services = []
             for line in stdout.splitlines()[1:]:  # Ignorer l'en-tête
                 parts = line.split()
-                if len(parts) == 3:  # service_name, 8tatus, status_at_boot
+                if len(parts) == 2:  # service_name, status
+                    service_name = parts[0]
+                    status = parts[1]
+                    # Le statut au démarrage est généralement indiqué par la troisième colonne,
+                    # si présente, sinon mettre une valeur par défaut ou gérer les erreurs.
+                    services.append((computer_name, service_name, status))
+                    counter += 1
+
+                elif len(parts) == 3:  # service_name, 8tatus, status_at_boot
                     service_name = parts[0]
                     status = parts[1]
                     # Le statut au démarrage est généralement indiqué par la troisième colonne,
                     # si présente, sinon mettre une valeur par défaut ou gérer les erreurs.
                     status_at_boot = parts[2] if len(parts) > 2 else "unknown"
                     services.append((computer_name, service_name, status, status_at_boot))
+                    counter += 1
 
             # Écrire dans le fichier CSV
             with open(output_file, mode='w', newline='') as csvfile:
                 csv_writer = csv.writer(csvfile)
                 csv_writer.writerow(['computer_name', 'service_name', 'status', 'status_at_boot'])  # En-tête
                 csv_writer.writerows(services)
-
-            print(green(f"Services informations has been written into {output_file}."))
+            if counter >= 1:
+                print(green(f"Services informations has been written into {output_file}."))
+            else:
+                print(yellow(f"{output_file} must be empty."))
         else:
             print(yellow("Not managed by Systemd"))
     else:
