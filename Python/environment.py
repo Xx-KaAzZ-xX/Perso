@@ -37,6 +37,7 @@ import csv
 import shutil
 import glob
 import sqlite3
+from crontab import CronSlices
 
 # Chemin vers le système de fichiers monté
 script_name = sys.argv[0]
@@ -786,6 +787,148 @@ def get_linux_browsing_data(mount_path, computer_name):
     else:
         print(yellow(f"No browsing data found, {output_file} should be empty"))
 
+
+def parse_crontab_line(line, is_user_crontab=False):
+    """Parse a crontab line into a human-readable schedule."""
+    parts = line.split()
+    if len(parts) < (6 if not is_user_crontab else 5):
+        return None
+
+    if is_user_crontab:
+        # Crontab utilisateur : pas de champ pour l'utilisateur
+        minute, hour, day, month, weekday = parts[:5]
+        task = ' '.join(parts[5:])
+        user_crontab = None  # Utilisateur déterminé hors de cette fonction
+    else:
+        # /etc/crontab ou /etc/cron.d/ : champ utilisateur inclus
+        minute, hour, day, month, weekday, user_crontab = parts[:6]
+        task = ' '.join(parts[6:])
+
+    def humanize_cron(minute, hour, day, month, weekday):
+        schedule = []
+
+        # Minutes
+        schedule.append(f"{minute} minutes" if minute != "*" else "every minute")
+
+        # Hours
+        schedule.append(f"at {hour}h" if hour != "*" else "every hour")
+
+        # Days
+        if day == "*" and weekday == "*":
+            schedule.append("every day")
+        elif day != "*":
+            schedule.append(f"on day {day}")
+        elif weekday != "*":
+            schedule.append(f"on weekdays {weekday}")
+
+        # Months
+        schedule.append(f"in month {month}" if month != "*" else "every month")
+
+        return " ".join(schedule)
+
+    return humanize_cron(minute, hour, day, month, weekday), task, user_crontab
+
+
+def get_linux_crontab(mount_path, computer_name):
+    #output_file = os.path.join(script_path, result_folder, "linux_crontab.csv")
+    script_path = os.path.dirname(os.path.realpath(__file__))
+    output_file = script_path + "/" + result_folder + "/" + "linux_crontab.csv"
+    csv_columns = ['computer_name', 'user', 'scheduled', 'task', 'source_file']
+    print(yellow("[+] Retrieving crontab ..."))
+    tasks = []
+    
+    try:
+         
+        users = [
+        entry.split(':')[0] 
+        for entry in open(mount_path + '/etc/passwd').readlines() 
+        if int(entry.split(':')[2]) >= 1000 or entry.split(':')[0] == "root"
+        ]
+ 
+
+ # Parse /etc/crontab
+        etc_crontab = os.path.join(mount_path, "etc/crontab")
+        if os.path.exists(etc_crontab):
+            with open(etc_crontab, "r") as file:
+                for line in file:
+                    if line.strip() and not line.startswith("#"):
+                        parsed_schedule = parse_crontab_line(line)
+                        if parsed_schedule:
+                            schedule, task, user_crontab = parsed_schedule
+                            tasks.append({
+                                "computer_name": computer_name,
+                                "user": user_crontab,  # Default user for /etc/crontab
+                                "scheduled": schedule,
+                                "task": task,
+                                "source_file": "/etc/crontab"
+                            })
+    
+    # Parse /etc/cron.d/
+        cron_d_dir = os.path.join(mount_path, "etc/cron.d")
+        if os.path.isdir(cron_d_dir):
+            for file_name in os.listdir(cron_d_dir):
+                cron_file = os.path.join(cron_d_dir, file_name)
+                if os.path.isfile(cron_file):
+                    with open(cron_file, "r") as file:
+                        for line in file:
+                            if line.strip() and not line.startswith("#"):
+                                parsed_schedule = parse_crontab_line(line)
+                                if parsed_schedule:
+                                    schedule, task, user_crontab = parsed_schedule
+                                    tasks.append({
+                                        "computer_name": computer_name,
+                                        "user": user_crontab,
+                                        "scheduled": schedule,
+                                        "task": task,
+                                        "source_file": f"/etc/cron.d/{file_name}"
+                                    })
+    
+    # Parse /etc/cron.{daily,weekly,monthly}
+        cron_periodic_dirs = ["daily", "weekly", "monthly"]
+        for period in cron_periodic_dirs:
+            cron_dir = os.path.join(mount_path, f"etc/cron.{period}")
+            if os.path.isdir(cron_dir):
+                for script in os.listdir(cron_dir):
+                    script_path = os.path.join(cron_dir, script)
+                    if os.path.isfile(script_path):
+                        tasks.append({
+                            "computer_name": computer_name,
+                            "user": user_crontab,
+                            "scheduled": f"every {period}",
+                            "task": script,
+                            "source_file": f"/etc/cron.{period}/{script}"
+                        })
+    
+    # Parse crontab for each user
+        for user in users:
+            user_crontab = os.path.join(mount_path, f"var/spool/cron/crontabs/{user}")
+            if os.path.exists(user_crontab):
+                with open(user_crontab, "r") as file:
+                    for line in file:
+                        if line.strip() and not line.startswith("#"):
+                            parsed_schedule = parse_crontab_line(line)
+                            if parsed_schedule:
+                                schedule, task, user_crontab = parsed_schedule
+                                tasks.append({
+                                    "computer_name" : computer_name,
+                                    "user": user,
+                                    "scheduled": schedule,
+                                    "task": task,
+                                    "source_file": user_crontab
+                                })
+
+    # Write tasks to CSV
+        with open(output_file, mode="w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=csv_columns)
+            writer.writeheader()
+            writer.writerows(tasks)
+    except Exception as e:
+        print(red(f"Error : {e}"))
+
+    print(green(f"Crontab entries saved to {output_file}"))
+
+     
+
 def get_linux_used_space(mount_path, computer_name):
     output_file = os.path.join(script_path, result_folder, "linux_disk_usage.csv")
     csv_columns = ['computer_name', 'directory', 'percent_used']
@@ -1410,70 +1553,6 @@ def get_windows_installed_programs(mount_path, computer_name):
     except Exception as e:
         print(red(f"[-] Error running regripper or writing output: {e}"))
         return
-'''
-def get_windows_executed_programs(mount_path, computer_name):
-    output_file = os.path.join(script_path, result_folder, "windows_executed_programs.csv")
-    csv_columns = ['computer_name', 'filepath', 'executed_date']
-    print(yellow("[+] Retrieving executed programs"))
-
-    possible_amcache_path = [
-        "Windows/AppCompat/Programs/Amcache.hve",
-        "Windows/appcompat/Programs/Amcache.hve"
-    ]
-    counter = 0
-    # Parcourt tous les chemins possibles pour Amcache
-    for amcache in possible_amcache_path:
-        amcache_path = os.path.join(mount_path, amcache)
-        if os.path.exists(amcache_path):
-            try:
-                reg = Registry.Registry(amcache_path)
-            except Exception as e:
-                print(red(f"Error opening Amcache.hve at {amcache_path}: {e}"))
-                continue  # Passe au prochain chemin si erreur lors de l'ouverture
-
-            try:
-                key = reg.open("Root\\File")
-            except Registry.RegistryKeyNotFoundException:
-                print(yellow(f"Couldn't find the Amcache key in {amcache_path} "))
-                continue  # Passe au prochain chemin si la clé n'est pas trouvée
-
-            # Écriture dans le fichier CSV pour chaque clé trouvée
-            with open(output_file, mode='a', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=csv_columns)
-                writer.writeheader()
-                
-                try:
-                    for subkey in key.subkeys():
-                        program_info = {
-                            'computer_name': computer_name,
-                            'filepath': '',
-                            'executed_date': ''
-                        }
-                        try:
-                            for sub_subkey in subkey.subkeys():
-                                for value in sub_subkey.values():
-                                    if value.name() == "17":
-                                        win_timestamp = value.value()
-                                        program_info['executed_date'] = str(get_windows_timestamp(win_timestamp))
-                                    elif value.name() == "15":
-                                        program_info['filepath'] = value.value()
-                                if program_info['filepath']:
-                                    writer.writerow(program_info)
-                                    counter += 1
-                        except Registry.RegistryKeyNotFoundException as e:
-                            print(red(f"[-]Error accessing subkeys of {subkey.name()}: {e}"))
-                            continue
-                except Exception as e:
-                    print(red(f"[-] Problem retrieving executed program elements: {e}"))
-        else:
-            print(yellow(f"{amcache_path} not found, moving to the next path."))
-
-    if counter >= 1:
-        print(green(f"Executed programs have been written into {output_file}"))
-    else:
-        print(yellow(f"{output_file} should be empty"))
-
-'''
 
 def get_windows_executed_programs(mount_path, computer_name):
     output_file = os.path.join(script_path, result_folder, "windows_executed_programs.csv")
@@ -1778,8 +1857,8 @@ def get_files_of_interest(mount_path, computer_name):
     if run_find_crypto == "yes":
         output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
 
-        files_to_search = ['wallet.*', '*.wallet', "*.kdbx" ]#Simply look for presence
-        file_types_to_search = ["*.txt", "*.exe", "*.exe_"] #Yara search into these ones
+        files_to_search = ['wallet.*', '*.wallet', "*.kdbx", "*.sql", "*.ibd",]#Simply look for presence
+        file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.bson", "*.json"] #Yara search into these ones
         csv_columns = ['computer_name', 'type', 'match', 'source_file']
 
         if os.path.exists('/usr/bin/yara'):
@@ -1811,6 +1890,8 @@ def get_files_of_interest(mount_path, computer_name):
                                 counter += 1
                             elif "kdbx" in file_per_line:
                                 writer.writerow({"computer_name": computer_name, "type": "keepass_file", "match": "", "source_file": file_per_line})
+                            elif "ibd" in file_per_line or "sql" in file_per_line:
+                                writer.writerow({"computer_name": computer_name, "type": "database_file", "match": "", "source_file": file_per_line})
                                 counter += 1
 
 
@@ -1943,6 +2024,7 @@ if len(sys.argv) > 1:
             get_linux_used_space(mount_path, computer_name)
             get_linux_browsing_history(mount_path, computer_name)
             get_linux_browsing_data(mount_path, computer_name)
+            get_linux_crontab(mount_path, computer_name)
             #create_volatility_profile(mount_path)
             get_files_of_interest(mount_path, computer_name)
         elif platform == "Windows":
