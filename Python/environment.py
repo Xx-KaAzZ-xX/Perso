@@ -14,6 +14,7 @@ import os
 import ipaddress
 import re
 import time
+import xml.etree.ElementTree as ET
 import yaml
 import gzip
 import json
@@ -1642,6 +1643,74 @@ def get_windows_executed_programs(mount_path, computer_name):
                 continue
 
 
+def get_windows_scheduled_tasks(mount_path, computer_name):
+    tasks_dir = os.path.join(mount_path, "Windows/System32/Tasks")
+    output_file = os.path.join(script_path, result_folder, "windows_scheduled_tasks.csv")
+    csv_columns = ['computer_name', 'task_name', 'date', 'action', 'user', 'schedule', 'command']
+
+    print(yellow("[+] Retrieving scheduled tasks from Tasks directory"))
+    tasks = []
+    target_tags = ["Date", "Author", "Triggers", "Enabled", "UserId", "Actions", "Exec", "Command"]
+    counter = 0
+    task_counter = 0
+
+    try:
+        # Parcourir les fichiers XML dans le répertoire des tâches
+        for root_dir, _, files in os.walk(tasks_dir):
+            for file in files:
+                file_path = os.path.join(root_dir, file)
+                task_counter += 1
+                try:
+                    tree = ET.parse(file_path)
+                    root = tree.getroot()
+
+                    task_data = {
+                        'computer_name': computer_name,
+                        'task_name': file,
+                        'date' : None,
+                        'action': None,
+                        'user': None,
+                        'schedule': None,
+                        'command' : None
+                    }
+
+                    # Extraction des informations pertinentes
+                    for elem in root.iter():
+                        tag_name = elem.tag.split('}')[-1]
+                        if tag_name in target_tags:
+                            value = elem.text.strip() if elem.text else None
+                            if tag_name == "UserId":
+                                task_data['user'] = value
+                            elif tag_name == "Actions":
+                                task_data['action'] = value
+                            elif tag_name == "Date":
+                                task_data['date'] = value
+                            elif tag_name == "Triggers":
+                                task_data['schedule'] = value  # Vous pouvez affiner la gestion des déclencheurs ici
+                            elif tag_name == "Command":
+                                task_data['command'] = value
+
+                    tasks.append(task_data)
+                    counter += 1
+
+                except Exception as e:
+                    print(red(f"[-] Error parsing task file {file_path}: {e}"))
+
+        # Écriture des informations dans le fichier CSV
+        with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=csv_columns)
+            writer.writeheader()
+            writer.writerows(tasks)
+
+        if counter >= 1:
+            print(green(f"[+] Scheduled tasks have been written into {output_file}"))
+            #print(f"there is {task_counter} scheduled task")
+        else:
+            print(yellow(f"{output_file} should be empty."))
+
+    except Exception as e:
+        print(f"[-] Error retrieving scheduled tasks: {e}")
+
 def convert_chrome_time(chrome_timestamp):
     """ Convert Webkit timestamp (microseconds since 1601) to human-readable date. """
     epoch_start = datetime(1601, 1, 1)
@@ -2049,6 +2118,7 @@ if len(sys.argv) > 1:
             get_windows_installed_roles(mount_path, computer_name)
             get_windows_installed_programs(mount_path, computer_name)
             get_windows_executed_programs(mount_path, computer_name)
+            get_windows_scheduled_tasks(mount_path, computer_name)
             get_windows_browsing_history(mount_path, computer_name)
             get_windows_browsing_data(mount_path, computer_name)
             hayabusa_evtx(mount_path, computer_name)
