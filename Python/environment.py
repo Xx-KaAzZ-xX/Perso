@@ -23,6 +23,8 @@ import math
 from collections import Counter
 import locale
 import subprocess
+import string
+from mnemonic import Mnemonic
 from collections import OrderedDict
 #from tabulate import tabulate
 from datetime import datetime, timedelta
@@ -1931,6 +1933,56 @@ def calculate_entropy(data):
     entropy_value = -sum((count / data_length) * math.log2(count / data_length) for count in frequency.values())
     return entropy_value
 
+def extract_printable_strings(file_path):
+    printable_set = set()
+    try:
+        # Ouverture du fichier en mode binaire pour éviter les problèmes d'encodage
+        with open(file_path, 'rb') as f:
+            byte_data = f.read()
+
+            # Convertir les données binaires en caractères imprimables (ASCII, sans contrôle)
+            current_string = []
+            for byte in byte_data:
+                char = chr(byte)
+                if char in string.printable and char not in string.whitespace:  # Si c'est un caractère imprimable et non un espace
+                    current_string.append(char)
+                else:
+                    if current_string:
+                        # Ajouter la chaîne trouvée (convertie en une chaîne de caractères)
+                        printable_set.add(''.join(current_string))
+                        current_string = []
+            if current_string:
+                printable_set.add(''.join(current_string))  # Ajouter la dernière chaîne si elle existe
+
+        # Découper chaque chaîne en mots
+        words_set = set()
+        for printable_string in printable_set:
+            words = printable_string.split()  # Découper la chaîne en mots
+            words_set.update(words)  # Ajouter tous les mots dans le set
+
+        return words_set
+
+    except Exception as e:
+        print(f"Erreur lors de l'extraction des chaînes du fichier {file_path}: {e}")
+        return set()
+
+def find_btc_seed_in_files(file_path, potential_seed, bip39_words, min_matches=11):
+    #print(f"Analyse du fichier : {file_path}")
+
+    # Extraire les mots imprimables du fichier
+    printable_words = extract_printable_strings(file_path)
+    # Faire l'intersection entre les mots imprimables et le dictionnaire BIP39
+    matches = printable_words.intersection(bip39_words)
+
+    # Si le nombre de matchs est supérieur au seuil, on affiche le fichier
+    if len(matches) >= min_matches:
+        print(f"Seed potentielle trouvée dans le fichier : {file_path}")
+        potential_seed = True
+        return potential_seed
+
+
+
+
 def get_files_of_interest(mount_path, computer_name):
     run_find_crypto = input("Do you want to launch some files of interest research? It will be quite long? (yes/no): ").strip().lower()
 
@@ -1938,8 +1990,12 @@ def get_files_of_interest(mount_path, computer_name):
         output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
 
         files_to_search = ['wallet.*', '*.wallet', "*.kdbx", "*.sql", "*.ibd",]#Simply look for presence
-        file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.bson", "*.json"] #Yara search into these ones
+        file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.bson", "*.json", "*.dat"] #Yara search into these ones
         csv_columns = ['computer_name', 'type', 'match', 'source_file']
+        mnemo = Mnemonic("english")
+        bip39_words = set(mnemo.wordlist)  # Set des 2048 mots BIP39
+        potential_seed = False
+
 
         if os.path.exists('/usr/bin/yara'):
             print(yellow("[+] Launching some research. It may take several minutes..."))
@@ -1960,6 +2016,7 @@ def get_files_of_interest(mount_path, computer_name):
                 # Search for specific files
                 for file in files_to_search:
                     find_file_cmd = f"find {mount_path} -type f -name {file}"
+
                     result_find_file = subprocess.run(find_file_cmd, shell=True, capture_output=True, text=True)
                     output = result_find_file.stdout
                     if output:
@@ -1968,7 +2025,13 @@ def get_files_of_interest(mount_path, computer_name):
                             if "wallet" in file_per_line:
                                 writer.writerow({"computer_name": computer_name, "type": "potential_wallet", "match": "", "source_file": file_per_line})
                                 counter += 1
-                            elif "kdbx" in file_per_line:
+                                ##launch BTC seed here
+                                find_btc_seed_in_files(file_per_line, potential_seed, bip39_words, min_matches=10)
+                                if potential_seed == True:
+                                    writer.writerow({"computer_name": computer_name, "type": "potential_btc_seed", "match": "", "source_file": file_per_line})
+                                    counter += 1
+
+                            elif ".kdbx" in file_per_line:
                                 writer.writerow({"computer_name": computer_name, "type": "keepass_file", "match": "", "source_file": file_per_line})
                             elif "ibd" in file_per_line or "sql" in file_per_line:
                                 writer.writerow({"computer_name": computer_name, "type": "database_file", "match": "", "source_file": file_per_line})
@@ -2000,29 +2063,50 @@ def get_files_of_interest(mount_path, computer_name):
                                         "source_file": source_file
                                     })
                                     counter += 1
-                find_file_without_extension_cmd = f"find {mount_path} -type f ! -name \"*.*\"-type f ! -name \"*.*\" -exec {yara_cmd} {{}} \\;"
+                            ## launch BTC seed here
+                            #find_btc_seed_in_files(source_file, bip39_words, min_matches=10)
+                            find_btc_seed_in_files(source_file, potential_seed, bip39_words, min_matches=10)
+                                if potential_seed == True:
+                                    writer.writerow({"computer_name": computer_name, "type": "potential_btc_seed", "match": "", "source_file": source_file})
+                                    counter += 1
+
+
+                find_file_without_extension_cmd = f"find {mount_path} -type f ! -name \"*.*\" -type f ! -name \"*.*\" -exec {yara_cmd} {{}} \\;"
+                #print(find_file_without_extension_cmd)
                 print(f"Looking for files of interest without extension with YARA")
                 result_find_without_extension = subprocess.run(find_file_without_extension_cmd, shell=True, capture_output=True, text=True)
                 clean_output2 = result_find_without_extension.stdout.replace(r'\n', '\n')
+                #print(clean_output2)
                 lines2 = clean_output2.splitlines()
+                #print(lines2)
                 for line2 in lines2:
                     if line2.startswith("Detect_Files_Of_Interest"):
-                        source_file = line2.split(" ", 1)[1]
-                    elif source_file:
+                        source_file2 = line2.split(" ", 1)[1]
+                        if "/proc" in source_file2 or "/sys" in source_file2:
+                            continue
+                        #print(source_file2)
+                    elif source_file2:
                         match_info = re.match(r"0x[\da-f]+:\$(\w+): (.+)", line2)
                         if match_info:
                             tag_type = match_info.group(1)
                             matched_string = match_info.group(2)
-                            entry = (computer_name, tag_type, matched_string, source_file)
+                            entry = (computer_name, tag_type, matched_string, source_file2)
                             if entry not in unique_entries:
                                 unique_entries.add(entry)
                                 writer.writerow({
                                     "computer_name": computer_name,
                                     "type": tag_type,
                                     "match": matched_string,
-                                    "source_file": source_file
+                                    "source_file": source_file2
                                 })
                                 counter += 1
+                        ##launch btc seed here
+                        find_btc_seed_in_files(source_file2, potential_seed, bip39_words, min_matches=10)
+                                if potential_seed == True:
+                                    writer.writerow({"computer_name": computer_name, "type": "potential_btc_seed", "match": "", "source_file": source_file2})
+                                    counter += 1
+
+
                 ## Detect VeraCrypt container; File has to be larger than 1GB, without signature and a large entropy
                 print("Looking now for Veracrypt container on the FileSystem...")
                 min_size = 1 * 1024**3 #1Go min
@@ -2126,6 +2210,17 @@ if len(sys.argv) > 1:
             #extract_windows_evtx
         else:
             print("Unknown OS")
+            run_search = input("The mouting point isn't a filesystem, but do you can launch some files of interest research? It will be quite long? (yes/no): ").strip().lower()
+            if run_search == "yes":
+                computer_name = "Unknown"
+                get_files_of_interest(mount_path, computer_name)
+            else:
+                print("Script is going to exit.")
+                sys.exit(0)
+
+
+
+
     else:
         print("Le répertoire " + mount_path + " n'existe pas")
 else:
