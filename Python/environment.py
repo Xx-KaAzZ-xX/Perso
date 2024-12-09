@@ -1935,50 +1935,56 @@ def calculate_entropy(data):
     return entropy_value
 
 def extract_printable_strings(file_path):
-    printable_set = set()
+    words_list = []  # Liste pour garder l'ordre des mots
     try:
-        # Ouverture du fichier en mode binaire pour éviter les problèmes d'encodage
         with open(file_path, 'rb') as f:
             byte_data = f.read()
 
-            # Convertir les données binaires en caractères imprimables (ASCII, sans contrôle)
             current_string = []
             for byte in byte_data:
                 char = chr(byte)
-                if char in string.printable and char not in string.whitespace:  # Si c'est un caractère imprimable et non un espace
+                if char in string.printable and char not in string.whitespace:
                     current_string.append(char)
                 else:
                     if current_string:
-                        # Ajouter la chaîne trouvée (convertie en une chaîne de caractères)
-                        printable_set.add(''.join(current_string))
-                        current_string = []
+                        words_list.append(''.join(current_string))
+                    current_string = []
             if current_string:
-                printable_set.add(''.join(current_string))  # Ajouter la dernière chaîne si elle existe
+                words_list.append(''.join(current_string))
 
-        # Découper chaque chaîne en mots
-        words_set = set()
-        for printable_string in printable_set:
-            words = printable_string.split()  # Découper la chaîne en mots
-            words_set.update(words)  # Ajouter tous les mots dans le set
-
-        return words_set
+        # Découper les chaînes en mots et les retourner dans l'ordre d'apparition
+        return [word for word in ' '.join(words_list).split()]
 
     except Exception as e:
         print(f"Erreur lors de l'extraction des chaînes du fichier {file_path}: {e}")
-        return set()
+        return []
+
+def find_btc_mnemo_in_files(file_path, bip39_words, min_matches=10):
+    try:
+        # Extraire les mots imprimables dans l'ordre
+        printable_words = extract_printable_strings(file_path)
+
+        # Nettoyer les mots pour ne garder que des caractères alphabétiques
+        cleaned_printable_words = set()
+        for word in printable_words:
+            cleaned_word = re.sub(r"[^a-z]", "", word.lower())  # Nettoyage de chaque mot
+            if len(cleaned_word) > 2:
+                cleaned_printable_words.add(cleaned_word)
+
+        # Intersection avec le dictionnaire BIP39
+        matches = cleaned_printable_words.intersection(bip39_words)
+        #print(f"{matches} dans {file_path}")
+
+        # Vérifier si le nombre de correspondances atteint le seuil
+        if len(matches) >= min_matches:
+            #print(f"{file_path} sera analysé pour la seed")
+            return True
+        return False
+    except Exception as e:
+        print(f"[-] Error processing {file_path}: {e}")
+        return False
 
 
-def find_btc_mnemo_in_files(file_path, bip39_words, min_matches=11):
-
-    # Extraire les mots imprimables du fichier
-    printable_words = extract_printable_strings(file_path)
-    # Faire l'intersection entre les mots imprimables et le dictionnaire BIP39
-    matches = printable_words.intersection(bip39_words)
-
-    # Si le nombre de matchs est supérieur au seuil, on affiche le fichier
-    if len(matches) >= min_matches:
-        return True
- 
 def find_btc_seed_in_file(file_path, bip39_words):
     try:
         printable_words = extract_printable_strings(file_path)
@@ -1987,28 +1993,30 @@ def find_btc_seed_in_file(file_path, bip39_words):
         found_words = []
         jokers = 0  # Compteur de joker (mots non BIP39)
         max_jokers = 2
-        # Parcours des mots imprimables extraits
-        for word in printable_words:
-            if word in bip39_words:
-                # Si le mot est dans la liste BIP39, l'ajouter à la liste found_words
-                found_words.append(word)
-                jokers = 0  # Réinitialiser le compteur de joker si on trouve un mot valide
-            elif jokers < max_jokers:
-                # Si le mot n'est pas un match, mais que le nombre de jokers est inférieur à la limite, l'ignorer
-                jokers += 1
-            else:
-                # Si trop de jokers, réinitialiser et recommencer la recherche
-                found_words = []
-                jokers = 0
-            
-            # Vérifier si la longueur de found_words atteint le nombre minimal
-            if len(found_words) in {12, 15, 18, 24}:
-                return " ".join(found_words)
 
-        # Si on n'a pas trouvé assez de correspondances
+        # Parcours des mots imprimables extraits, respectant l'ordre
+        for word in printable_words:
+            word = word.lower()
+            if len(word) > 2 and re.fullmatch(r"[a-z]+", word):
+                #print(f"Traitement du mot : {word}")
+                if word in bip39_words:
+                    found_words.append(word)
+                    jokers = 0  # Réinitialiser le compteur de joker
+                elif jokers < max_jokers:
+                    jokers += 1  # Ignorer les mots non valides mais dans la limite de jokers
+                else:
+                    found_words = []  # Réinitialiser si trop de jokers
+                    jokers = 0
+
+                # Vérifier si la longueur de found_words atteint le nombre minimal
+                #if len(found_words) in {12, 15, 18, 24}:
+                if 10 <= len(found_words) <= 24:
+                    #print(f"Seed potentielle trouvée : {found_words}")
+                    return " ".join(found_words)
+
         return False
     except Exception as e:
-        print(red(f"[-] Error: {e}"))
+        print(f"[-] Error: {e}")
         return False
 
 def analyze_yara(computer_name, file_path):
@@ -2073,7 +2081,7 @@ def get_files_of_interest(mount_path, computer_name):
                     writer.writerow({"computer_name": computer_name, "type": "potential_wallet", "match": "", "source_file": file_path})
                     counter += 1
                     # Lancer la recherche de BTC seed
-                    if find_btc_mnemo_in_files(file_path, bip39_words, min_matches=12):
+                    if find_btc_mnemo_in_files(file_path, bip39_words, min_matches=10):
                         found_words = find_btc_seed_in_file(file_path, bip39_words)
                         if found_words:
                             writer.writerow({"computer_name": computer_name, "type": "potential_btc_seed", "match": found_words, "source_file": file_path})
@@ -2107,7 +2115,8 @@ def get_files_of_interest(mount_path, computer_name):
                             })
                         counter += 1
                 # Lancer la recherche de BTC seed
-                elif find_btc_mnemo_in_files(file_path, bip39_words, min_matches=11):
+                elif find_btc_mnemo_in_files(file_path, bip39_words, min_matches=10):
+                    #print(f"looking into {file_path}")
                     found_words = find_btc_seed_in_file(file_path, bip39_words)
                     if found_words:
                         writer.writerow({"computer_name": computer_name, "type": "potential_btc_seed", "match": found_words, "source_file": file_path})
@@ -2148,7 +2157,7 @@ def get_files_of_interest(mount_path, computer_name):
         else:
             print(yellow("No VeraCrypt container found"))
         if counter >= 1:
-            print(green(f"{counter} files in {output_file}"))
+            print(green(f"{counter} lines in {output_file}"))
         else:
             print(yellow(f"{output_file} must be empty"))
 
