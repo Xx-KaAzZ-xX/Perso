@@ -11,6 +11,7 @@ import platform
 import pandas as pd
 import struct
 import os
+import requests
 import ipaddress
 import re
 import time
@@ -201,7 +202,7 @@ def get_network_info(mount_path, computer_name):
         try:
             # Extraction des informations des interfaces
             if os.path.exists(interfaces_file):
-                print(f"Trying with {interfaces_file}") 
+                #print(f"Trying with {interfaces_file}") 
                 with open(interfaces_file) as f:
                     #iface, ip, netmask, gateway = None, None, None, None
                     for line in f:
@@ -2010,7 +2011,7 @@ def find_btc_seed_in_file(file_path, bip39_words):
 
                 # Vérifier si la longueur de found_words atteint le nombre minimal
                 #if len(found_words) in {12, 15, 18, 24}:
-                if 10 <= len(found_words) <= 24:
+                if 11 <= len(found_words) <= 24:
                     #print(f"Seed potentielle trouvée : {found_words}")
                     return " ".join(found_words)
 
@@ -2019,16 +2020,19 @@ def find_btc_seed_in_file(file_path, bip39_words):
         print(f"[-] Error: {e}")
         return False
 
-def analyze_yara(computer_name, file_path):
+def analyze_yara(computer_name, file_path, rule):
 
     if os.path.exists('/usr/bin/yara'):
-        yara_rule = os.path.join(script_path, 'files_of_interest.yar')
+        #yara_rule = os.path.join(script_path, 'files_of_interest.yar')
+        yara_rule = os.path.join(script_path, rule)
+        #print(yara_rule)
         if not os.path.exists(yara_rule):
             print(f"Yara rule {yara_rule} doesn't exist. Script will exit.")
             sys.exit(1)
 
     yara_cmd = f"yara -w -s -r {yara_rule}"
     launch_yara_cmd = f"{yara_cmd} {file_path}"
+    #print(launch_yara_cmd)
     result_yara_cmd = subprocess.run(launch_yara_cmd, shell=True, capture_output=True, text=True)
     clean_output = result_yara_cmd.stdout.replace(r'\n', '\n')
     lines = clean_output.splitlines()
@@ -2042,13 +2046,14 @@ def analyze_yara(computer_name, file_path):
             return entry
 
 def get_files_of_interest(mount_path, computer_name):
-    run_find_crypto = input("Do you want to launch some files of interest research? It will be quite long? (yes/no): ").strip().lower()
+    run_find_crypto = input("Do you want to launch some files of interest & crypto stuff research? It will be quite long? (yes/no): ").strip().lower()
     if run_find_crypto != "yes":
         return
     output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
     files_to_search = ['wallet.*', '*.wallet', "*.kdbx", "*.sql", "*.ibd",]#Simply look for presence
     file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.bson", "*.json", "*.dat"] #Yara search into these ones
     csv_columns = ['computer_name', 'type', 'match', 'source_file']
+    rule = "simple_rule.yar"
     mnemo = Mnemonic("english")
     bip39_words = set(mnemo.wordlist)  # Set des 2048 mots BIP39
     potential_seed = False
@@ -2076,27 +2081,9 @@ def get_files_of_interest(mount_path, computer_name):
         with tqdm(total=nb_files_found, desc="Looking for files of interest", unit="file") as pbar:
             for file_path in files_found:
                 extension = Path(file_path).suffix
-                # Vérification des fichiers spécifiques
-                if "wallet" in file_path:
-                    writer.writerow({"computer_name": computer_name, "type": "potential_wallet", "match": "", "source_file": file_path})
-                    counter += 1
-                    # Lancer la recherche de BTC seed
-                    if find_btc_mnemo_in_files(file_path, bip39_words, min_matches=10):
-                        found_words = find_btc_seed_in_file(file_path, bip39_words)
-                        if found_words:
-                            writer.writerow({"computer_name": computer_name, "type": "potential_btc_seed", "match": found_words, "source_file": file_path})
-                            counter += 1
-                    entry = analyze_yara(computer_name, file_path)
-                    if entry:
-                        #print(entry)
-                        writer.writerow({
-                            "computer_name": entry["computer_name"],
-                            "type": entry["tag_type"],
-                            "match": entry["matched_string"],
-                            "source_file": entry["file_path"]
-                            })
-                        counter += 1
-
+                ##exclusion sur les fichiers de documentation
+                if "/doc/" in file_path or "/usr/share/" in file_path:
+                    continue
                 elif "kdb" in extension:
                     writer.writerow({"computer_name": computer_name, "type": "keepass_file", "match": "", "source_file": file_path})
                     counter += 1
@@ -2104,7 +2091,7 @@ def get_files_of_interest(mount_path, computer_name):
                 elif "ibd" in extension or "sql" in extension:
                     writer.writerow({"computer_name": computer_name, "type": "database_file", "match": "", "source_file": file_path})
                     counter += 1
-                    entry = analyze_yara(computer_name, file_path)
+                    entry = analyze_yara(computer_name, file_path, rule)
                     if entry: 
                         #print(entry)
                         writer.writerow({
@@ -2114,14 +2101,7 @@ def get_files_of_interest(mount_path, computer_name):
                             "source_file": entry["file_path"]
                             })
                         counter += 1
-                # Lancer la recherche de BTC seed
-                elif find_btc_mnemo_in_files(file_path, bip39_words, min_matches=10):
-                    #print(f"looking into {file_path}")
-                    found_words = find_btc_seed_in_file(file_path, bip39_words)
-                    if found_words:
-                        writer.writerow({"computer_name": computer_name, "type": "potential_btc_seed", "match": found_words, "source_file": file_path})
-                        counter += 1
-                entry = analyze_yara(computer_name, file_path)
+                entry = analyze_yara(computer_name, file_path, rule)
                 if entry:
                     #print(entry)
                     writer.writerow({
@@ -2132,7 +2112,6 @@ def get_files_of_interest(mount_path, computer_name):
                         })
                     #writer.writerow(entry)
                     counter += 1
-
                 pbar.update(1)
 
         ## Detect VeraCrypt container; File has to be larger than 1GB, without signature and a large entropy
@@ -2157,9 +2136,154 @@ def get_files_of_interest(mount_path, computer_name):
         else:
             print(yellow("No VeraCrypt container found"))
         if counter >= 1:
-            print(green(f"{counter} lines in {output_file}"))
+            ##print(green(f"{counter} lines in {output_file}"))
+            ## clean entries in csv files
+            try:
+                df = pd.read_csv(output_file)
+                df_unique = df.drop_duplicates()
+                num_rows = df_unique.shape[0]
+                df_unique.to_csv(output_file, index=False)
+                print(green(f"{num_rows} lines in {output_file}"))
+            except Exception as e:
+                print(green(f"{counter} lines in {output_file}"))
         else:
             print(yellow(f"{output_file} must be empty"))
+    ##Finally, launch crypto research
+    crypto_search(computer_name, mount_path)
+
+
+# Function to validate address via Blockstream
+def validate_btc_address(address):
+    #api_url = f"https://api.blockchair.com/{currency}/dashboards/address/{address}"
+    api_url = f"https://blockstream.info/api/address/{address}"
+    #print(f" Trying with {api_url}")
+    try:
+        response = requests.get(api_url, timeout=5)
+        #print(response)
+        data = response.json()
+        if data:
+            return True
+        else:
+            return False
+    except Exception as e:
+        # Erreur de connexion
+        #print(red(f"[-] Error : {e}"))
+        return False
+
+def crypto_search(computer_name, mount_path):
+    ##Different research for different thing
+    output_file = f"{script_path}/{result_folder}/crypto.csv"
+    #files_to_search = ["wallet.*","electrum", "keystore"]#Simply look for presence
+    files_to_search = [
+    "wallet.dat",        # Bitcoin Core et forks (Litecoin, Dogecoin, etc.)
+    "electrum.dat",      # Electrum Wallet
+    "default_wallet",    # Wasabi Wallet
+    "keystore",          # MyEtherWallet
+    "wallet.json",       # MultiDoge, Exodus, et autres wallets JSON
+    "UTC--",             # Ethereum wallets (geth)
+    "blockchain_wallet", # Blockchain.info
+    "keyfile",           # Parity et Geth (Ethereum)
+    "bitcoincash.dat",   # Bitcoin Cash Wallets
+    "monero-wallet.dat"  # Monero
+    ]
+    file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.bson", "*.json", "*.dat"] #Yara search into these ones
+    csv_columns = ['computer_name', 'type', 'match', 'source_file']
+    mnemo = Mnemonic("english")
+    rule = "crypto_rule.yar"
+    bip39_words = set(mnemo.wordlist)  # Set des 2048 mots BIP39
+    potential_seed = False
+
+    with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=csv_columns)
+        writer.writeheader()
+        counter = 0
+        files_found = []
+        entry = {}
+
+        ##Retrieve files with extension to look into for crypto and put them into files_found
+        for file_type in files_to_search + file_types_to_search:
+            find_cmd = f"find {mount_path} -type f -name '{file_type}'"
+            result_find = subprocess.run(find_cmd, shell=True, capture_output=True, text=True)
+            files_found.extend(result_find.stdout.splitlines())
+             
+         ##Retrieve files without extension and put them into files_found
+        find_cmd_no_extension = f"find {mount_path} -type f ! -name '*.*'"
+        result_no_extension = subprocess.run(find_cmd_no_extension, shell=True, capture_output=True, text=True)
+        files_found.extend(result_no_extension.stdout.splitlines())
+
+        ##initier un compteur et une barre de progression, ici c'est pas global
+        nb_files_found = len(files_found)
+        with tqdm(total=nb_files_found, desc="Searching for crypto elements", unit="file") as pbar:
+            for file_path in files_found:
+                file_name = file_path.split("/")[-1]
+                # Vérification des fichiers spécifiques
+                ##exclusion sur les fichiers de documentation
+                if "/usr/" in file_path or "/doc/" in file_path:
+                    continue
+                elif file_name in files_to_search:
+                    writer.writerow({"computer_name": computer_name, "type": "potential_wallet", "match": "", "source_file": file_path})
+                    counter += 1
+                    # Lancer la recherche de BTC seed
+                    if find_btc_mnemo_in_files(file_path, bip39_words, min_matches=10):
+                        found_words = find_btc_seed_in_file(file_path, bip39_words)
+                        if found_words:
+                            writer.writerow({"computer_name": computer_name, "type": "potential_btc_seed", "match": found_words, "source_file": file_path})
+                            counter += 1
+                    entry = analyze_yara(computer_name, file_path, rule)
+                    if entry:
+                        print(entry)
+                        writer.writerow({
+                            "computer_name": entry["computer_name"],
+                            "type": entry["tag_type"],
+                            "match": entry["matched_string"],
+                            "source_file": entry["file_path"]
+                            })
+                        counter += 1
+
+                # Lancer la recherche de BTC seed
+                elif find_btc_mnemo_in_files(file_path, bip39_words, min_matches=10):
+                    #print(f"looking into {file_path}")
+                    found_words = find_btc_seed_in_file(file_path, bip39_words)
+                    if found_words:
+                        writer.writerow({"computer_name": computer_name, "type": "potential_btc_seed", "match": found_words, "source_file": file_path})
+                        counter += 1
+                entry = analyze_yara(computer_name, file_path, rule)
+                if entry:
+                    #print(entry)
+                    writer.writerow({
+                        "computer_name": entry["computer_name"],
+                        "type": entry["tag_type"],
+                        "match": entry["matched_string"],
+                        "source_file": entry["file_path"]
+                        })
+                    #writer.writerow(entry)
+                    counter += 1
+
+                pbar.update(1)
+        f.close()
+        if counter >= 1:
+            print(f"Cleaning and validating address in {output_file}...")
+            try:
+                ##print(green(f"{counter} lines in {output_file}"))
+                ## clean entries in csv files
+                df = pd.read_csv(output_file, encoding='utf-8')
+                df_unique = df.drop_duplicates()
+                df_unique['is_valid'] = "Unverified"
+                print(df_unique.columns)
+                for index, row in df_unique.iterrows():
+                    address = row["match"]
+                    if row["type"] in ["bitcoin_legacy", "bitcoin_p2sh", "bitcoin_bech32"]:
+                        if validate_btc_address(address):
+                            df_unique.at[index, 'is_valid'] = validate_btc_address(address)
+                            time.sleep(0.2) # avoid api limitation
+                df_unique.to_csv(output_file, index=False)
+                num_rows = df_unique.shape[0]
+                print(green(f"{num_rows} lines in {output_file}"))
+            except Exception as e:
+                print(red(f"[-] Error: {e}"))
+        else:
+            print(yellow(f"{output_file} must be empty"))
+
 
 
 def determine_platform(mount_path):
