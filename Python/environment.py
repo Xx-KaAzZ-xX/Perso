@@ -2032,6 +2032,7 @@ def analyze_yara(computer_name, file_path, rule):
 
     yara_cmd = f"yara -w -s -r {yara_rule}"
     launch_yara_cmd = f"{yara_cmd} {file_path}"
+    results = []
     #print(launch_yara_cmd)
     result_yara_cmd = subprocess.run(launch_yara_cmd, shell=True, capture_output=True, text=True)
     clean_output = result_yara_cmd.stdout.replace(r'\n', '\n')
@@ -2042,8 +2043,8 @@ def analyze_yara(computer_name, file_path, rule):
             tag_type = match_info.group(1)
             matched_string = match_info.group(2)
             entry = ({"computer_name": computer_name, "tag_type": tag_type, "matched_string": matched_string, "file_path": file_path})
-            #print(entry)
-            return entry
+            results.append(entry)
+    return results
 
 def get_files_of_interest(mount_path, computer_name):
     run_find_crypto = input("Do you want to launch some files of interest & crypto stuff research? It will be quite long? (yes/no): ").strip().lower()
@@ -2051,7 +2052,7 @@ def get_files_of_interest(mount_path, computer_name):
         return
     output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
     files_to_search = ['wallet.*', '*.wallet', "*.kdbx", "*.sql", "*.ibd",]#Simply look for presence
-    file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.bson", "*.json", "*.dat"] #Yara search into these ones
+    file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.bson", "*.json", "*.dat", "*.sh", "*.ps1", "*.py"] #Yara search into these ones
     csv_columns = ['computer_name', 'type', 'match', 'source_file']
     rule = "simple_rule.yar"
     mnemo = Mnemonic("english")
@@ -2063,7 +2064,7 @@ def get_files_of_interest(mount_path, computer_name):
         writer.writeheader()
         counter = 0
         files_found = []
-        entry = {}
+        entries = {}
 
         ##Retrieve files with interesting extension and put them into files_found
         for file_type in files_to_search + file_types_to_search:
@@ -2091,8 +2092,8 @@ def get_files_of_interest(mount_path, computer_name):
                 elif "ibd" in extension or "sql" in extension:
                     writer.writerow({"computer_name": computer_name, "type": "database_file", "match": "", "source_file": file_path})
                     counter += 1
-                    entry = analyze_yara(computer_name, file_path, rule)
-                    if entry: 
+                    entries = analyze_yara(computer_name, file_path, rule)
+                    for entry in entries: 
                         #print(entry)
                         writer.writerow({
                             "computer_name": entry["computer_name"],
@@ -2101,8 +2102,8 @@ def get_files_of_interest(mount_path, computer_name):
                             "source_file": entry["file_path"]
                             })
                         counter += 1
-                entry = analyze_yara(computer_name, file_path, rule)
-                if entry:
+                entries = analyze_yara(computer_name, file_path, rule)
+                for entry in entries:
                     #print(entry)
                     writer.writerow({
                         "computer_name": entry["computer_name"],
@@ -2137,10 +2138,11 @@ def get_files_of_interest(mount_path, computer_name):
             print(yellow("No VeraCrypt container found"))
         if counter >= 1:
             ##print(green(f"{counter} lines in {output_file}"))
+            print(f"Removing duplicates entries into {output_file}")
             ## clean entries in csv files
             try:
                 df = pd.read_csv(output_file)
-                df_unique = df.drop_duplicates()
+                df_unique = df.drop_duplicates(subset=["match"]) ##remove doublons
                 num_rows = df_unique.shape[0]
                 df_unique.to_csv(output_file, index=False)
                 print(green(f"{num_rows} lines in {output_file}"))
@@ -2229,9 +2231,9 @@ def crypto_search(computer_name, mount_path):
                         if found_words:
                             writer.writerow({"computer_name": computer_name, "type": "potential_btc_seed", "match": found_words, "source_file": file_path})
                             counter += 1
-                    entry = analyze_yara(computer_name, file_path, rule)
-                    if entry:
-                        print(entry)
+                    entries = analyze_yara(computer_name, file_path, rule)
+                    for entry in entries:
+                        #print(entry)
                         writer.writerow({
                             "computer_name": entry["computer_name"],
                             "type": entry["tag_type"],
@@ -2247,8 +2249,8 @@ def crypto_search(computer_name, mount_path):
                     if found_words:
                         writer.writerow({"computer_name": computer_name, "type": "potential_btc_seed", "match": found_words, "source_file": file_path})
                         counter += 1
-                entry = analyze_yara(computer_name, file_path, rule)
-                if entry:
+                entries = analyze_yara(computer_name, file_path, rule)
+                for entry in entries:
                     #print(entry)
                     writer.writerow({
                         "computer_name": entry["computer_name"],
@@ -2267,7 +2269,7 @@ def crypto_search(computer_name, mount_path):
                 ##print(green(f"{counter} lines in {output_file}"))
                 ## clean entries in csv files
                 df = pd.read_csv(output_file, encoding='utf-8')
-                df_unique = df.drop_duplicates()
+                df_unique = df.drop_duplicates(subset=["match"]) # remove doublons
                 df_unique['is_valid'] = "Unverified"
                 print(df_unique.columns)
                 for index, row in df_unique.iterrows():
