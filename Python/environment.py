@@ -20,6 +20,10 @@ import yaml
 import gzip
 import json
 import magic
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
+from threading import Lock
+import threading
 from tqdm import tqdm
 import math
 from collections import Counter
@@ -2025,7 +2029,6 @@ def analyze_yara(computer_name, file_path, rule):
     if os.path.exists('/usr/bin/yara'):
         #yara_rule = os.path.join(script_path, 'files_of_interest.yar')
         yara_rule = os.path.join(script_path, rule)
-        #print(yara_rule)
         if not os.path.exists(yara_rule):
             print(f"Yara rule {yara_rule} doesn't exist. Script will exit.")
             sys.exit(1)
@@ -2046,76 +2049,110 @@ def analyze_yara(computer_name, file_path, rule):
             results.append(entry)
     return results
 
+def process_chunk(chunk, computer_name, csv_queue, pbar, lock):
+    try:
+        for file_path in chunk:
+            result = ""
+            rule = "yara/files_rule.yar"
+            #print(f"processing {file_path}")
+            extension = Path(file_path).suffix
+
+            # Exclude Linux documentation files
+            if "/doc/" in file_path or "/usr/share/" in file_path or "/usr/lib" in file_path:
+                continue
+
+            if "kdb" in extension:
+                result = {"computer_name": computer_name, "type": "keepass_file", "match": "", "source_file": file_path}
+                if result:
+                    result.update(result)
+            elif "ps1" in extension or "py" in extension or "pl" in extension or "sh" in extension:
+                rule = "yara/script_rule.yar"
+                result = analyze_yara(computer_name, file_path, rule)
+            elif "ibd" in extension or "sql" in extension:
+                result = {"computer_name": computer_name, "type": "database_file", "match": "", "source_file": file_path}
+                if result:
+                    print(result)
+                    result.update(result)
+                yara_result = analyze_yara(computer_name, file_path, rule)
+                if yara_result:
+                    result.update(yara_result)
+            else:
+                result = analyze_yara(computer_name, file_path, rule)
+
+            # Write results to the queue
+            #print(result)
+            if isinstance(result, list):
+                for item in result:
+                    #print(item)
+                    csv_queue.put(item)
+            else:
+                continue
+            with lock:
+                pbar.update(1)
+
+    except Exception as e:
+        print(f"[-] Error : {e}")
+
+
 def get_files_of_interest(mount_path, computer_name):
     run_find_crypto = input("Do you want to launch some files of interest & crypto stuff research? It will be quite long? (yes/no): ").strip().lower()
     if run_find_crypto != "yes":
         return
+
     output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
-    files_to_search = ['wallet.*', '*.wallet', "*.kdbx", "*.sql", "*.ibd",]#Simply look for presence
-    file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.bson", "*.json", "*.dat", "*.sh", "*.ps1", "*.py"] #Yara search into these ones
-    csv_columns = ['computer_name', 'type', 'match', 'source_file']
-    rule = "simple_rule.yar"
-    mnemo = Mnemonic("english")
-    bip39_words = set(mnemo.wordlist)  # Set des 2048 mots BIP39
-    potential_seed = False
+    files_to_search = ['wallet.*', '*.wallet', "*.kdbx", "*.sql", "*.ibd"]
+    file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.bson", "*.json", "*.dat", "*.sh", "*.ps1", "*.py", "*.pl"]
+    num_threads = 8
 
+    # Collect all files
+    files_found = []
+    for file_type in files_to_search + file_types_to_search:
+        find_cmd = f"find {mount_path} -type f -name '{file_type}'"
+        result_find = subprocess.run(find_cmd, shell=True, capture_output=True, text=True)
+        files_found.extend(result_find.stdout.splitlines())
+
+    # Add files without extension
+    find_cmd_no_extension = f"find {mount_path} -type f ! -name '*.*'"
+    result_no_extension = subprocess.run(find_cmd_no_extension, shell=True, capture_output=True, text=True)
+    files_found.extend(result_no_extension.stdout.splitlines())
+
+    # Split files into chunks for multithreading
+    chunk_size = len(files_found) // num_threads + 1
+    file_chunks = [files_found[i:i + chunk_size] for i in range(0, len(files_found), chunk_size)]
+
+    # Thread-safe queue to collect CSV results
+    csv_queue = Queue()
+
+    # Progress bar and lock for thread-safe updates
+    lock = Lock()
+    with tqdm(total=len(files_found), desc="Processing files", unit="file") as pbar:
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [
+                executor.submit(process_chunk, chunk, computer_name, csv_queue, pbar, lock)
+                for chunk in file_chunks
+            ]
+            for future in futures:
+                future.result()  # Wait for all threads to finish
+
+    # Collect results and write to CSV
+    print("[+] Writing results to CSV...")
     with open(output_file, mode='w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=csv_columns)
+        writer = csv.DictWriter(f, fieldnames=['computer_name', 'type', 'match', 'source_file'])
         writer.writeheader()
-        counter = 0
-        files_found = []
-        entries = {}
 
-        ##Retrieve files with interesting extension and put them into files_found
-        for file_type in files_to_search + file_types_to_search:
-            find_cmd = f"find {mount_path} -type f -name '{file_type}'"
-            result_find = subprocess.run(find_cmd, shell=True, capture_output=True, text=True)
-            files_found.extend(result_find.stdout.splitlines())
-             
-         ##Retrieve files without extension and put them into files_found
-        find_cmd_no_extension = f"find {mount_path} -type f ! -name '*.*'"
-        result_no_extension = subprocess.run(find_cmd_no_extension, shell=True, capture_output=True, text=True)
-        files_found.extend(result_no_extension.stdout.splitlines())
+        while not csv_queue.empty():
+            entry = csv_queue.get()
+            if isinstance(entry, dict):
+                # Mapper les champs si nécessaire
+                mapped_entry = {
+                    "computer_name": entry.get("computer_name", ""),
+                    "type": entry.get("tag_type", ""),  # Remap 'tag_type' vers 'type'
+                    "match": entry.get("matched_string", ""),  # Remap 'matched_string' vers 'match'
+                    "source_file": entry.get("file_path", "")  # Remap 'file_path' vers 'source_file'
+                }
+                writer.writerow(mapped_entry)
 
-        ##initier un compteur et une barre de progression, ici c'est pas global
-        nb_files_found = len(files_found)
-        with tqdm(total=nb_files_found, desc="Looking for files of interest", unit="file") as pbar:
-            for file_path in files_found:
-                extension = Path(file_path).suffix
-                ##exclusion sur les fichiers de documentation
-                if "/doc/" in file_path or "/usr/share/" in file_path:
-                    continue
-                elif "kdb" in extension:
-                    writer.writerow({"computer_name": computer_name, "type": "keepass_file", "match": "", "source_file": file_path})
-                    counter += 1
-
-                elif "ibd" in extension or "sql" in extension:
-                    writer.writerow({"computer_name": computer_name, "type": "database_file", "match": "", "source_file": file_path})
-                    counter += 1
-                    entries = analyze_yara(computer_name, file_path, rule)
-                    for entry in entries: 
-                        #print(entry)
-                        writer.writerow({
-                            "computer_name": entry["computer_name"],
-                            "type": entry["tag_type"],
-                            "match": entry["matched_string"],
-                            "source_file": entry["file_path"]
-                            })
-                        counter += 1
-                entries = analyze_yara(computer_name, file_path, rule)
-                for entry in entries:
-                    #print(entry)
-                    writer.writerow({
-                        "computer_name": entry["computer_name"],
-                        "type": entry["tag_type"],
-                        "match": entry["matched_string"],
-                        "source_file": entry["file_path"]
-                        })
-                    #writer.writerow(entry)
-                    counter += 1
-                pbar.update(1)
-
-        ## Detect VeraCrypt container; File has to be larger than 1GB, without signature and a large entropy
+        # Detect VeraCrypt container; File has to be larger than 1GB, without signature and a large entropy
         print("Looking now for Veracrypt container on the FileSystem...")
         min_size = 1 * 1024**3 #1Go min
         find_vc_cmd = f"find {mount_path} -type f -size +{min_size // 1024}k"
@@ -2133,23 +2170,16 @@ def get_files_of_interest(mount_path, computer_name):
                     #print(f"entropy of {file_path} is : {file_entropy}")
                     if file_entropy > 4.1:
                         writer.writerow({"computer_name": computer_name, "type": "potential_veracrypt_container", "match": "", "source_file": file_path})
-                        counter += 1
-        else:
-            print(yellow("No VeraCrypt container found"))
-        if counter >= 1:
-            ##print(green(f"{counter} lines in {output_file}"))
-            print(f"Removing duplicates entries into {output_file}")
-            ## clean entries in csv files
-            try:
-                df = pd.read_csv(output_file)
-                df_unique = df.drop_duplicates(subset=["match"]) ##remove doublons
-                num_rows = df_unique.shape[0]
-                df_unique.to_csv(output_file, index=False)
-                print(green(f"{num_rows} lines in {output_file}"))
-            except Exception as e:
-                print(green(f"{counter} lines in {output_file}"))
-        else:
-            print(yellow(f"{output_file} must be empty"))
+
+    # Optional: Remove duplicates
+    print("[+] Removing duplicates in CSV...")
+    try:
+        df = pd.read_csv(output_file)
+        df_unique = df.drop_duplicates(subset=["match"])
+        df_unique.to_csv(output_file, index=False)
+        print(green(f"{df_unique.shape[0]} unique rows written to {output_file}."))
+    except Exception as e:
+        print(f"Error deduplicating CSV: {e}")
     ##Finally, launch crypto research
     crypto_search(computer_name, mount_path)
 
@@ -2172,49 +2202,144 @@ def validate_btc_address(address):
         #print(red(f"[-] Error : {e}"))
         return False
 
+
+def process_crypto_chunk(chunk, computer_name, files_to_search, bip39_words, csv_queue, pbar, lock):
+    try:
+        results = []
+        rule = "yara/crypto_rule.yar"
+        
+        for file_path in chunk:
+            result = ""
+            file_name = file_path.split("/")[-1]
+
+            # Exclude certain paths
+            if "/usr/" in file_path or "/doc/" in file_path:
+                continue
+
+            # Check if the file matches one of the wallet names
+            if file_name in files_to_search:
+                result = {"computer_name": computer_name, "type": "potential_wallet", "match": "", "source_file": file_path}
+                results.append(result)
+
+            # Check for BTC mnemonic in the file
+            if find_btc_mnemo_in_files(file_path, bip39_words, min_matches=10):
+                found_words = find_btc_seed_in_file(file_path, bip39_words)
+                if found_words:
+                    result = {"computer_name": computer_name, "type": "potential_btc_seed", "match": found_words, "source_file": file_path}
+                    results.append(result)
+
+            # Analyze Yara rule for the file
+            entries = analyze_yara(computer_name, file_path, rule)
+            if entries:
+                for entry in entries:
+                    result = {
+                        "computer_name": entry["computer_name"],
+                        "type": entry["tag_type"],
+                        "match": entry["matched_string"],
+                        "source_file": entry["file_path"]
+                    }
+                    results.append(result)
+
+            # Write results to the queue
+            for res in results:
+                csv_queue.put(res)
+
+            # Update progress bar
+            with lock:
+                pbar.update(1)
+
+    except Exception as e:
+        print(f"[-] Error in thread: {e}")
+
+
 def crypto_search(computer_name, mount_path):
-    ##Different research for different thing
+    # Définition des fichiers à rechercher
     output_file = f"{script_path}/{result_folder}/crypto.csv"
-    #files_to_search = ["wallet.*","electrum", "keystore"]#Simply look for presence
     files_to_search = [
-    "wallet.dat",        # Bitcoin Core et forks (Litecoin, Dogecoin, etc.)
-    "electrum.dat",      # Electrum Wallet
-    "default_wallet",    # Wasabi Wallet
-    "keystore",          # MyEtherWallet
-    "wallet.json",       # MultiDoge, Exodus, et autres wallets JSON
-    "UTC--",             # Ethereum wallets (geth)
-    "blockchain_wallet", # Blockchain.info
-    "keyfile",           # Parity et Geth (Ethereum)
-    "bitcoincash.dat",   # Bitcoin Cash Wallets
-    "monero-wallet.dat"  # Monero
+        "wallet.dat",        # Bitcoin Core et forks (Litecoin, Dogecoin, etc.)
+        "electrum.dat",      # Electrum Wallet
+        "default_wallet",    # Wasabi Wallet
+        "keystore",          # MyEtherWallet
+        "wallet.json",       # MultiDoge, Exodus, et autres wallets JSON
+        "UTC--",             # Ethereum wallets (geth)
+        "blockchain_wallet", # Blockchain.info
+        "keyfile",           # Parity et Geth (Ethereum)
+        "bitcoincash.dat",   # Bitcoin Cash Wallets
+        "monero-wallet.dat"  # Monero
     ]
-    file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.bson", "*.json", "*.dat"] #Yara search into these ones
+    file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.bson", "*.json", "*.dat"]
     csv_columns = ['computer_name', 'type', 'match', 'source_file']
     mnemo = Mnemonic("english")
-    rule = "crypto_rule.yar"
     bip39_words = set(mnemo.wordlist)  # Set des 2048 mots BIP39
-    potential_seed = False
+    num_threads = 8
+    counter = 0
 
+    # Collect all files
+    files_found = []
+    for file_type in files_to_search + file_types_to_search:
+        find_cmd = f"find {mount_path} -type f -name '{file_type}'"
+        result_find = subprocess.run(find_cmd, shell=True, capture_output=True, text=True)
+        files_found.extend(result_find.stdout.splitlines())
+
+    # Add files without extension
+    find_cmd_no_extension = f"find {mount_path} -type f ! -name '*.*'"
+    result_no_extension = subprocess.run(find_cmd_no_extension, shell=True, capture_output=True, text=True)
+    files_found.extend(result_no_extension.stdout.splitlines())
+
+    # Split files into chunks for multithreading
+    chunk_size = len(files_found) // num_threads + 1
+    file_chunks = [files_found[i:i + chunk_size] for i in range(0, len(files_found), chunk_size)]
+
+    # Thread-safe queue to collect CSV results
+    csv_queue = Queue()
+
+    # Progress bar and lock for thread-safe updates
+    lock = Lock()
+    with tqdm(total=len(files_found), desc="Processing files", unit="file") as pbar:
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [
+                executor.submit(process_crypto_chunk, chunk, computer_name, files_to_search, bip39_words, csv_queue, pbar, lock)
+                for chunk in file_chunks
+            ]
+            for future in futures:
+                future.result()  # Wait for all threads to finish
+
+
+    # Écrire les résultats dans le fichier CSV
     with open(output_file, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=csv_columns)
         writer.writeheader()
-        counter = 0
-        files_found = []
-        entry = {}
 
-        ##Retrieve files with extension to look into for crypto and put them into files_found
-        for file_type in files_to_search + file_types_to_search:
-            find_cmd = f"find {mount_path} -type f -name '{file_type}'"
-            result_find = subprocess.run(find_cmd, shell=True, capture_output=True, text=True)
-            files_found.extend(result_find.stdout.splitlines())
-             
-         ##Retrieve files without extension and put them into files_found
-        find_cmd_no_extension = f"find {mount_path} -type f ! -name '*.*'"
-        result_no_extension = subprocess.run(find_cmd_no_extension, shell=True, capture_output=True, text=True)
-        files_found.extend(result_no_extension.stdout.splitlines())
+        # Ajouter les résultats du csv_queue
+        while not csv_queue.empty():
+            row = csv_queue.get()
+            writer.writerow(row)
+            counter += 1
+    if counter >= 1:
+        print(f"Cleaning and validating address in {output_file}...")
+        try:
+            ##print(green(f"{counter} lines in {output_file}"))
+            ## clean entries in csv files
+            df = pd.read_csv(output_file, encoding='utf-8')
+            df_unique = df.drop_duplicates(subset=["match"]) # remove doublons
+            df_unique['is_valid'] = "Unverified"
+            #print(df_unique.columns)
+            for index, row in df_unique.iterrows():
+                address = row["match"]
+                if row["type"] in ["bitcoin_legacy", "bitcoin_p2sh", "bitcoin_bech32"]:
+                    if validate_btc_address(address):
+                        df_unique.at[index, 'is_valid'] = validate_btc_address(address)
+                        time.sleep(0.2) # avoid api limitation
+            df_unique.to_csv(output_file, index=False)
+            num_rows = df_unique.shape[0]
+            print(green(f"{num_rows} lines in {output_file}"))
+        except Exception as e:
+            print(red(f"[-] Error: {e}"))
+    else:
+        print(yellow(f"{output_file} must be empty"))
 
-        ##initier un compteur et une barre de progression, ici c'est pas global
-        nb_files_found = len(files_found)
+
+    '''
         with tqdm(total=nb_files_found, desc="Searching for crypto elements", unit="file") as pbar:
             for file_path in files_found:
                 file_name = file_path.split("/")[-1]
@@ -2264,29 +2389,10 @@ def crypto_search(computer_name, mount_path):
                 pbar.update(1)
         f.close()
         if counter >= 1:
-            print(f"Cleaning and validating address in {output_file}...")
-            try:
-                ##print(green(f"{counter} lines in {output_file}"))
-                ## clean entries in csv files
-                df = pd.read_csv(output_file, encoding='utf-8')
-                df_unique = df.drop_duplicates(subset=["match"]) # remove doublons
-                df_unique['is_valid'] = "Unverified"
-                print(df_unique.columns)
-                for index, row in df_unique.iterrows():
-                    address = row["match"]
-                    if row["type"] in ["bitcoin_legacy", "bitcoin_p2sh", "bitcoin_bech32"]:
-                        if validate_btc_address(address):
-                            df_unique.at[index, 'is_valid'] = validate_btc_address(address)
-                            time.sleep(0.2) # avoid api limitation
-                df_unique.to_csv(output_file, index=False)
-                num_rows = df_unique.shape[0]
-                print(green(f"{num_rows} lines in {output_file}"))
-            except Exception as e:
-                print(red(f"[-] Error: {e}"))
-        else:
-            print(yellow(f"{output_file} must be empty"))
-
-
+            print(green(f"{counter} lines in {output_file}"))
+        
+        
+    '''
 
 def determine_platform(mount_path):
     linux_indicators = ['etc', 'var', 'usr']
