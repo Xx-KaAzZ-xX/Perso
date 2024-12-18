@@ -2062,50 +2062,50 @@ def analyze_yara(computer_name, file_path, rule):
             results.append(entry)
     return results
 
-
-def process_chunk(chunk, computer_name, csv_queue, pbar, lock):
+def process_chunk(chunk, computer_name, csv_queue, thread_id):
+    local_pbar = tqdm(
+        total=len(chunk), desc=f"Thread {thread_id}", position=thread_id, unit="file"
+    )
     try:
+        file_to_analyze_per_chunk = f"thread_{thread_id}_files.txt"
         for file_path in chunk:
             result = {"computer_name": computer_name, "match": "", "source_file": file_path}
             yara_result = []
             rule = "yara/files_rule.yar"
             extension = Path(file_path).suffix
+            with open(file_to_analyze_per_chunk, "w") as file:
+                file.write(file_path)
+                file.close()
 
             # Exclude Linux documentation files
             if "/doc/" in file_path or "/usr/share/" in file_path or "/usr/lib" in file_path:
+                local_pbar.update(1)
                 continue
 
             if "kdb" in extension:
-                result = {"computer_name": computer_name, "type": "keepass_file", "match": "", "source_file": file_path}
-                #print(result)
+                result.update({"type": "keepass_file"})
                 csv_queue.put(result)
             elif "ps1" in extension or "py" in extension or "pl" in extension or "sh" in extension:
                 rule = "yara/script_rule.yar"
                 yara_result = analyze_yara(computer_name, file_path, rule)
-                # Si analyse YARA retourne des résultats, ajoutez-les à la queue
                 if yara_result:
                     for item in yara_result:
-                        #print(item)
                         csv_queue.put(item)
             elif "ibd" in extension or "sql" in extension:
-                result = {"computer_name": computer_name, "type": "database_file", "match": "", "source_file": file_path}
-                #print(result)
+                result.update({"type": "database_file"})
                 csv_queue.put(result)
             else:
                 yara_result = analyze_yara(computer_name, file_path, rule)
-                #print(yara_result)
-                # Si analyse YARA retourne des résultats, ajoutez-les à la queue
                 if yara_result:
                     for item in yara_result:
-                        #print(item)
                         csv_queue.put(item)
 
-            # Mise à jour du progress bar
-            with lock:
-                pbar.update(1)
+            local_pbar.update(1)
 
     except Exception as e:
-        print(f"[-] Error : {e}")
+        print(f"[-] Error in thread {thread_id}: {e}")
+    finally:
+        local_pbar.close()
 
 
 def get_files_of_interest(mount_path, computer_name):
@@ -2116,7 +2116,7 @@ def get_files_of_interest(mount_path, computer_name):
     output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
     files_to_search = ['wallet.*', '*.wallet', "*.kdbx", "*.sql", "*.ibd"]
     file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.bson", "*.json", "*.dat", "*.sh", "*.ps1", "*.py", "*.pl"]
-    num_threads = 8
+    num_threads = 4
 
     # Collect all files
     files_found = []
@@ -2125,49 +2125,33 @@ def get_files_of_interest(mount_path, computer_name):
         result_find = subprocess.run(find_cmd, shell=True, capture_output=True, text=True)
         files_found.extend(result_find.stdout.splitlines())
 
-    # Add files without extension
     find_cmd_no_extension = f"find {mount_path} -type f ! -name '*.*'"
     result_no_extension = subprocess.run(find_cmd_no_extension, shell=True, capture_output=True, text=True)
     files_found.extend(result_no_extension.stdout.splitlines())
 
     # Split files into chunks for multithreading
     chunk_size = len(files_found) // num_threads + 1
+    print(f"There are {len(files_found)} to analyze")
     file_chunks = [files_found[i:i + chunk_size] for i in range(0, len(files_found), chunk_size)]
 
-    # Thread-safe queue to collect CSV results
     csv_queue = Queue()
 
-    # Progress bar and lock for thread-safe updates
-    lock = Lock()
-    with tqdm(total=len(files_found), desc="Processing files", unit="file") as pbar:
-        with ThreadPoolExecutor(max_workers=num_threads) as executor:
-            futures = [
-                executor.submit(process_chunk, chunk, computer_name, csv_queue, pbar, lock)
-                for chunk in file_chunks
-            ]
-            for future in futures:
-                future.result()  # Wait for all threads to finish
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        futures = [
+            executor.submit(process_chunk, chunk, computer_name, csv_queue, thread_id)
+            for thread_id, chunk in enumerate(file_chunks)
+        ]
+        for future in futures:
+            future.result()
 
-    # Collect results and write to CSV
     print("[+] Writing results to CSV...")
     with open(output_file, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=['computer_name', 'type', 'match', 'source_file'])
         writer.writeheader()
-
         while not csv_queue.empty():
             entry = csv_queue.get()
-            if isinstance(entry, dict):
-                # Mapper les champs si nécessaire
-                mapped_entry = {
-                    "computer_name": entry.get("computer_name", ""),
-                    "type": entry.get("type", ""), 
-                    "match": entry.get("match", ""),
-                    "source_file": entry.get("source_file", "") 
-                }
-                try:
-                    writer.writerow(mapped_entry)
-                except Exception as e:
-                    print(e)
+            writer.writerow(entry)
+
         # Detect VeraCrypt container; File has to be larger than 1GB, without signature and a large entropy
         print("Looking now for Veracrypt container on the FileSystem...")
         min_size = 1 * 1024**3 #1Go min
@@ -2285,7 +2269,7 @@ def crypto_search(computer_name, mount_path):
     csv_columns = ['computer_name', 'type', 'match', 'source_file']
     mnemo = Mnemonic("english")
     bip39_words = set(mnemo.wordlist)  # Set des 2048 mots BIP39
-    num_threads = 8
+    num_threads = 4
     counter = 0
 
     # Collect all files
