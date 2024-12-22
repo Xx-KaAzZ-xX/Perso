@@ -1,11 +1,12 @@
 #!/usr/bin/python
 
 
-#. Description: Script d'analyse d'environnement à partir d'un point de montage
+#. Description: Script to extract some artefacts from mounted filesystem to analyze into csv files for ELK indexation
 #. Requirements : 
 #- hayabusa in the folder of the script
 #- regripper in the folder of the script
 #- python-regristry : https://github.com/williballenthin/python-registry
+#- and all libraries that are imported 
 
 import platform
 import pandas as pd
@@ -18,15 +19,19 @@ import time
 import xml.etree.ElementTree as ET
 import yaml
 import gzip
+import base58
+from bech32 import bech32_decode, convertbits
 import json
 import magic
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from threading import Lock
 import threading
+import hashlib,base58,binascii
 from tqdm import tqdm
 import math
 from collections import Counter
+from bitcoinaddress import Address
 import locale
 import subprocess
 import string
@@ -809,7 +814,6 @@ def get_linux_browsing_data(mount_path, computer_name):
 
 
 def parse_crontab_line(line, is_user_crontab=False):
-    """Parse a crontab line into a human-readable schedule."""
     parts = line.split()
     if len(parts) < (6 if not is_user_crontab else 5):
         return None
@@ -819,34 +823,15 @@ def parse_crontab_line(line, is_user_crontab=False):
         minute, hour, day, month, weekday = parts[:5]
         task = ' '.join(parts[5:])
         user_crontab = None  # Utilisateur déterminé hors de cette fonction
+        schedule = " ".join(parts[:5])
     else:
         # /etc/crontab ou /etc/cron.d/ : champ utilisateur inclus
         minute, hour, day, month, weekday, user_crontab = parts[:6]
         task = ' '.join(parts[6:])
+        schedule = " ".join(parts[:5])
+        user_crontab = (parts[5])
+    return schedule, task, user_crontab
 
-    def humanize_cron(minute, hour, day, month, weekday):
-        schedule = []
-
-        # Minutes
-        schedule.append(f"{minute} minutes" if minute != "*" else "every minute")
-
-        # Hours
-        schedule.append(f"at {hour}h" if hour != "*" else "every hour")
-
-        # Days
-        if day == "*" and weekday == "*":
-            schedule.append("every day")
-        elif day != "*":
-            schedule.append(f"on day {day}")
-        elif weekday != "*":
-            schedule.append(f"on weekdays {weekday}")
-
-        # Months
-        schedule.append(f"in month {month}" if month != "*" else "every month")
-
-        return " ".join(schedule)
-
-    return humanize_cron(minute, hour, day, month, weekday), task, user_crontab
 
 
 def get_linux_crontab(mount_path, computer_name):
@@ -927,6 +912,7 @@ def get_linux_crontab(mount_path, computer_name):
                     for line in file:
                         if line.strip() and not line.startswith("#"):
                             parsed_schedule = parse_crontab_line(line)
+                            print(f"foobar {schedule}")
                             if parsed_schedule:
                                 schedule, task, user_crontab = parsed_schedule
                                 tasks.append({
@@ -1006,17 +992,6 @@ def get_windows_machine_name(mount_path):
             if value.name() == "ComputerName":
                 computer_name = value.value()
                 return computer_name
-
-def get_windows_storage_info(mount_path):
-    try:
-        # à voir si ça marche vraiment avec un filesystem monté sur le système
-        disk_usage = os.popen("df -h " + mount_path).read()
-    except Exception as e:
-        print("Une erreur s'est produite lors de la récupération des informations de stockage :", e)
-        return
-    chaine = "Informations de stockage "
-    print(bandeau(chaine))
-    print(disk_usage)
 
 def get_windows_mounted_devices(mount_path):
     path_to_reg_hive = mount_path + 'Windows/System32/config/SYSTEM'
@@ -2073,9 +2048,9 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
             yara_result = []
             rule = "yara/files_rule.yar"
             extension = Path(file_path).suffix
-            with open(file_to_analyze_per_chunk, "w") as file:
-                file.write(file_path)
-                file.close()
+            with open(file_to_analyze_per_chunk, "a") as file:
+                output = f"{file_path}\n"
+                file.write(output)
 
             # Exclude Linux documentation files
             if "/doc/" in file_path or "/usr/share/" in file_path or "/usr/lib" in file_path:
@@ -2143,7 +2118,6 @@ def get_files_of_interest(mount_path, computer_name):
         ]
         for future in futures:
             future.result()
-
     print("[+] Writing results to CSV...")
     with open(output_file, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=['computer_name', 'type', 'match', 'source_file'])
@@ -2151,7 +2125,6 @@ def get_files_of_interest(mount_path, computer_name):
         while not csv_queue.empty():
             entry = csv_queue.get()
             writer.writerow(entry)
-
         # Detect VeraCrypt container; File has to be larger than 1GB, without signature and a large entropy
         print("Looking now for Veracrypt container on the FileSystem...")
         min_size = 1 * 1024**3 #1Go min
@@ -2181,36 +2154,73 @@ def get_files_of_interest(mount_path, computer_name):
         print(f"Error deduplicating CSV: {e}")
     ##Finally, launch crypto research
     crypto_search(computer_name, mount_path)
-# Function to validate address via Blockstream
+
+
 def validate_btc_address(address):
-    #api_url = f"https://api.blockchair.com/{currency}/dashboards/address/{address}"
-    api_url = f"https://blockstream.info/api/address/{address}"
-    #print(f" Trying with {api_url}")
     try:
-        response = requests.get(api_url, timeout=5)
-        #print(response)
-        data = response.json()
-        if data:
+        # Décoder l'adresse Bitcoin en Base58Check
+        decoded = base58.b58decode(address)
+
+        # Vérifier que la longueur est correcte (25 octets)
+        if len(decoded) != 25:
+            print(f"Address {address} has incorrect length")
+            return False
+
+        # Extraire les 4 derniers octets comme checksum
+        given_checksum = decoded[-4:]
+
+        # Extraire les 21 premiers octets (préfixe + hachage public)
+        data = decoded[:-4]
+
+        # Recalculer le checksum : double SHA-256
+        recalculated_checksum = hashlib.sha256(hashlib.sha256(data).digest()).digest()[:4]
+
+        # Comparer les checksums
+        if given_checksum == recalculated_checksum:
             return True
         else:
             return False
+
     except Exception as e:
-        # Erreur de connexion
-        #print(red(f"[-] Error : {e}"))
+        print(f"Error: {e}")
         return False
 
-
-def process_crypto_chunk(chunk, computer_name, files_to_search, bip39_words, csv_queue, pbar, lock):
+def validate_bech32_address(address):
     try:
-        results = []
+        # Decode the Bech32 address
+        hrp, data = bech32_decode(address)
+        if not data:
+            return False
+
+        # Check if the Human-Readable Part is valid (mainnet: "bc", testnet: "tb")
+        if hrp not in ["bc", "tb"]:
+            return False
+
+        # Convert the data to 5-bit groups for SegWit validation
+        decoded = convertbits(data[1:], 5, 8, False)
+        if decoded is None or len(decoded) < 2 or len(decoded) > 40:
+            return False
+
+        # If everything is valid, return True
+        return True
+    except Exception as e:
+        print(f"Validation error: {e}")
+        return False
+
+def process_crypto_chunk(chunk, computer_name, files_to_search, bip39_words, csv_queue, thread_id):
+    local_pbar = tqdm(
+        total=len(chunk), desc=f"Thread {thread_id}", position=thread_id, unit="file"
+    )
+    try:
         rule = "yara/crypto_rule.yar"
-        
+
         for file_path in chunk:
-            result = ""
+            results = []
             file_name = file_path.split("/")[-1]
 
             # Exclude certain paths
             if "/usr/" in file_path or "/doc/" in file_path or "/snap/" in file_path or "/proc" in file_path or "/sys/" in file_path:
+                local_pbar.update(1)
                 continue
 
             # Check if the file matches one of the wallet names
@@ -2235,7 +2245,6 @@ def process_crypto_chunk(chunk, computer_name, files_to_search, bip39_words, csv
                         "match": entry["match"],
                         "source_file": entry["source_file"]
                     }
-                    #print(result)
                     results.append(result)
 
             # Write results to the queue
@@ -2243,34 +2252,27 @@ def process_crypto_chunk(chunk, computer_name, files_to_search, bip39_words, csv
                 csv_queue.put(res)
 
             # Update progress bar
-            with lock:
-                pbar.update(1)
+            local_pbar.update(1)
 
     except Exception as e:
-        print(f"[-] Error in thread: {e}")
+        print(f"[-] Error in thread {thread_id}: {e}")
+    finally:
+        local_pbar.close()
+
 
 
 def crypto_search(computer_name, mount_path):
-    # Définition des fichiers à rechercher
+    print(f"Looking now for crypto elements")
     output_file = f"{script_path}/{result_folder}/crypto.csv"
     files_to_search = [
-        "wallet.dat",        # Bitcoin Core et forks (Litecoin, Dogecoin, etc.)
-        "electrum.dat",      # Electrum Wallet
-        "default_wallet",    # Wasabi Wallet
-        "keystore",          # MyEtherWallet
-        "wallet.json",       # MultiDoge, Exodus, et autres wallets JSON
-        "UTC--",             # Ethereum wallets (geth)
-        "blockchain_wallet", # Blockchain.info
-        "keyfile",           # Parity et Geth (Ethereum)
-        "bitcoincash.dat",   # Bitcoin Cash Wallets
-        "monero-wallet.dat"  # Monero
+        "wallet.dat", "electrum.dat", "default_wallet", "keystore", "wallet.json",
+        "UTC--", "blockchain_wallet", "keyfile", "bitcoincash.dat", "monero-wallet.dat"
     ]
     file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.bson", "*.json", "*.dat"]
     csv_columns = ['computer_name', 'type', 'match', 'source_file']
     mnemo = Mnemonic("english")
     bip39_words = set(mnemo.wordlist)  # Set des 2048 mots BIP39
     num_threads = 4
-    counter = 0
 
     # Collect all files
     files_found = []
@@ -2279,7 +2281,6 @@ def crypto_search(computer_name, mount_path):
         result_find = subprocess.run(find_cmd, shell=True, capture_output=True, text=True)
         files_found.extend(result_find.stdout.splitlines())
 
-    # Add files without extension
     find_cmd_no_extension = f"find {mount_path} -type f ! -name '*.*'"
     result_no_extension = subprocess.run(find_cmd_no_extension, shell=True, capture_output=True, text=True)
     files_found.extend(result_no_extension.stdout.splitlines())
@@ -2291,42 +2292,45 @@ def crypto_search(computer_name, mount_path):
     # Thread-safe queue to collect CSV results
     csv_queue = Queue()
 
-    # Progress bar and lock for thread-safe updates
-    lock = Lock()
-    with tqdm(total=len(files_found), desc="Processing files", unit="file") as pbar:
-        with ThreadPoolExecutor(max_workers=num_threads) as executor:
-            futures = [
-                executor.submit(process_crypto_chunk, chunk, computer_name, files_to_search, bip39_words, csv_queue, pbar, lock)
-                for chunk in file_chunks
-            ]
-            for future in futures:
-                future.result()  # Wait for all threads to finish
-
+    # Progress bars for each thread
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        futures = [
+            executor.submit(process_crypto_chunk, chunk, computer_name, files_to_search, bip39_words, csv_queue, thread_id)
+            for thread_id, chunk in enumerate(file_chunks)
+        ]
+        for future in futures:
+            future.result()  # Wait for all threads to finish
 
     # Écrire les résultats dans le fichier CSV
     with open(output_file, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=csv_columns)
         writer.writeheader()
-
-        # Ajouter les résultats du csv_queue
         while not csv_queue.empty():
-            row = csv_queue.get()
-            writer.writerow(row)
-            counter += 1
-    if counter >= 1:
-        print(f"Removing duplicates from {output_file}...")
-        try:
-            ##print(green(f"{counter} lines in {output_file}"))
-            ## clean entries in csv files
-            df = pd.read_csv(output_file, encoding='utf-8')
-            df_unique = df.drop_duplicates() # remove duplicates
-            df_unique.to_csv(output_file, index=False)
-            print(green(f"{df_unique.shape[0]} unique rows written to {output_file}"))
-        except Exception as e:
-            print(red(f"[-] Error : {e}"))
-    else:
-        print(yellow(f"{output_file} must be empty"))
+            writer.writerow(csv_queue.get())
 
+    # Optional: Remove duplicates
+    print("[+] Removing duplicates in CSV...")
+    try:
+        df = pd.read_csv(output_file)
+        df_unique = df.drop_duplicates()
+        #df_unique.to_csv(output_file, index=False)
+        if df_unique.shape[0] > 0:
+            print(f"Verifying BTC address...")
+            df_unique['verified'] = 'unknown'
+            for index, row in df_unique.iterrows():
+                if row['type'] == 'bitcoin_legacy':
+                    is_valid = validate_btc_address(row['match'])
+                    df_unique.at[index, 'verified'] = 'true' if is_valid else 'false'
+                if row['type'] == 'bitcoin_bech32':
+                    is_valid = validate_bech32_address(row['match'])
+                    df_unique.at[index, 'verified'] = 'true' if is_valid else 'false'
+            print
+            print(green(f"{df_unique.shape[0]} unique rows written to {output_file}"))
+            df_unique.to_csv(output_file, index=False)
+        else:
+            print(yellow(f"{output_file} should be empty"))
+    except Exception as e:
+        print(f"Error deduplicating CSV: {e}")
 
 def determine_platform(mount_path):
     linux_indicators = ['etc', 'var', 'usr']
@@ -2374,7 +2378,7 @@ if len(sys.argv) > 1:
             list_services(mount_path, computer_name)
             get_command_history(mount_path, computer_name)
             get_firewall_rules(mount_path, computer_name)
-            get_linux_used_space(mount_path, computer_name)
+            #get_linux_used_space(mount_path, computer_name)
             get_linux_browsing_history(mount_path, computer_name)
             get_linux_browsing_data(mount_path, computer_name)
             get_linux_crontab(mount_path, computer_name)
@@ -2418,5 +2422,3 @@ else:
 # Fermer le descripteur de fichier global après utilisation
 if original_cwd_fd is not None:
     os.close(original_cwd_fd)
-
-
