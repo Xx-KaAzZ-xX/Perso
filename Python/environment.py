@@ -1972,7 +1972,7 @@ def find_btc_seed_in_file(file_path, bip39_words):
         # Liste pour stocker les mots trouvés dans la seed
         found_words = []
         jokers = 0  # Compteur de joker (mots non BIP39)
-        max_jokers = 2
+        max_jokers = 0
 
         # Parcours des mots imprimables extraits, respectant l'ordre
         for word in printable_words:
@@ -1981,16 +1981,17 @@ def find_btc_seed_in_file(file_path, bip39_words):
                 #print(f"Traitement du mot : {word}")
                 if word in bip39_words:
                     found_words.append(word)
-                    jokers = 0  # Réinitialiser le compteur de joker
-                elif jokers < max_jokers:
-                    jokers += 1  # Ignorer les mots non valides mais dans la limite de jokers
+                    #jokers = 0  # Réinitialiser le compteur de joker
+                #elif jokers < max_jokers:
+                    #jokers += 1  # Ignorer les mots non valides mais dans la limite de jokers
                 else:
                     found_words = []  # Réinitialiser si trop de jokers
-                    jokers = 0
+                    break
+                    #jokers = 0
 
                 # Vérifier si la longueur de found_words atteint le nombre minimal
-                #if len(found_words) in {12, 15, 18, 24}:
-                if 11 <= len(found_words) <= 24:
+                if len(found_words) in {12, 15, 18, 24}:
+                #if 11 <= len(found_words) <= 24:
                     #print(f"Seed potentielle trouvée : {found_words}")
                     return " ".join(found_words)
 
@@ -2042,15 +2043,15 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
         total=len(chunk), desc=f"Thread {thread_id}", position=thread_id, unit="file"
     )
     try:
-        file_to_analyze_per_chunk = f"thread_{thread_id}_files.txt"
+        #file_to_analyze_per_chunk = f"thread_{thread_id}_files.txt"
         for file_path in chunk:
             result = {"computer_name": computer_name, "match": "", "source_file": file_path}
             yara_result = []
             rule = "yara/files_rule.yar"
             extension = Path(file_path).suffix
-            with open(file_to_analyze_per_chunk, "a") as file:
-                output = f"{file_path}\n"
-                file.write(output)
+            #with open(file_to_analyze_per_chunk, "a") as file:
+                #output = f"{file_path}\n"
+                #file.write(output)
 
             # Exclude Linux documentation files
             if "/doc/" in file_path or "/usr/share/" in file_path or "/usr/lib" in file_path:
@@ -2147,7 +2148,13 @@ def get_files_of_interest(mount_path, computer_name):
     print("[+] Removing duplicates in CSV...")
     try:
         df = pd.read_csv(output_file)
-        df_unique = df.drop_duplicates()
+        #split empty lines and others
+        empty_match = df[df['match'].isna() | (df['match'] == "")]
+        # remove duplicates only when match is set
+        non_empty_match = df[~(df['match'].isna() | (df['match'] == ""))].drop_duplicates(subset=['match'])
+        # combine both datasets
+        df_unique = pd.concat([empty_match, non_empty_match])
+        # export to csv
         df_unique.to_csv(output_file, index=False)
         print(green(f"{df_unique.shape[0]} unique rows written to {output_file}"))
     except Exception as e:
@@ -2163,7 +2170,7 @@ def validate_btc_address(address):
 
         # Vérifier que la longueur est correcte (25 octets)
         if len(decoded) != 25:
-            print(f"Address {address} has incorrect length")
+            #print(f"Address {address} has incorrect length")
             return False
 
         # Extraire les 4 derniers octets comme checksum
@@ -2213,15 +2220,21 @@ def process_crypto_chunk(chunk, computer_name, files_to_search, bip39_words, csv
     )
     try:
         rule = "yara/crypto_rule.yar"
+        max_file_size = 5 * 1024 * 1024 * 1024  # Limit analysis to 5Go
 
         for file_path in chunk:
             results = []
             file_name = file_path.split("/")[-1]
-
+            
             # Exclude certain paths
             if "/usr/" in file_path or "/doc/" in file_path or "/snap/" in file_path or "/proc" in file_path or "/sys/" in file_path:
                 local_pbar.update(1)
                 continue
+            if os.path.getsize(file_path) > max_file_size:
+                local_pbar.update(1)
+                continue
+            with open("process_crypto_log.txt", "a") as log_file:
+                log_file.write(f"Starting analysis of {file_path}\n")
 
             # Check if the file matches one of the wallet names
             if file_name in files_to_search:
@@ -2229,12 +2242,13 @@ def process_crypto_chunk(chunk, computer_name, files_to_search, bip39_words, csv
                 results.append(result)
 
             # Check for BTC mnemonic in the file
+            '''
             if find_btc_mnemo_in_files(file_path, bip39_words, min_matches=10):
                 found_words = find_btc_seed_in_file(file_path, bip39_words)
                 if found_words:
                     result = {"computer_name": computer_name, "type": "potential_btc_seed", "match": found_words, "source_file": file_path}
                     results.append(result)
-
+            '''
             # Analyze Yara rule for the file
             entries = analyze_yara(computer_name, file_path, rule)
             if entries:
@@ -2268,7 +2282,7 @@ def crypto_search(computer_name, mount_path):
         "wallet.dat", "electrum.dat", "default_wallet", "keystore", "wallet.json",
         "UTC--", "blockchain_wallet", "keyfile", "bitcoincash.dat", "monero-wallet.dat"
     ]
-    file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.bson", "*.json", "*.dat"]
+    file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.bson", "*.json", "*.dat", "*.db", "*.sqlite3"]
     csv_columns = ['computer_name', 'type', 'match', 'source_file']
     mnemo = Mnemonic("english")
     bip39_words = set(mnemo.wordlist)  # Set des 2048 mots BIP39
@@ -2299,7 +2313,10 @@ def crypto_search(computer_name, mount_path):
             for thread_id, chunk in enumerate(file_chunks)
         ]
         for future in futures:
-            future.result()  # Wait for all threads to finish
+            try:
+                future.result()  # Wait for all threads to finish
+            except Exception as e:
+                print(red(f"Thread encoutered an error: {e}"))
 
     # Écrire les résultats dans le fichier CSV
     with open(output_file, mode='w', newline='', encoding='utf-8') as f:
