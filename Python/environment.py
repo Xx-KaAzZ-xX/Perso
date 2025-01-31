@@ -2067,8 +2067,11 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
                 if yara_result:
                     for item in yara_result:
                         csv_queue.put(item)
-            elif "ibd" in extension or "sql" in extension:
+            elif "ibd" in extension or "sql" in extension or "db" in extension:
                 result.update({"type": "database_file"})
+                csv_queue.put(result)
+            elif "dmp" in extension:
+                result.update({"type": "minidump_file"})
                 csv_queue.put(result)
             else:
                 yara_result = analyze_yara(computer_name, file_path, rule)
@@ -2282,7 +2285,7 @@ def crypto_search(computer_name, mount_path):
         "wallet.dat", "electrum.dat", "default_wallet", "keystore", "wallet.json",
         "UTC--", "blockchain_wallet", "keyfile", "bitcoincash.dat", "monero-wallet.dat"
     ]
-    file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.bson", "*.json", "*.dat", "*.db", "*.sqlite3"]
+    file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.mdb", "*.psql", "*.pgsql" "*.bson", "*.json", "*.dat", "*.db", "*.sqlite", "*.dmp", "pagefile.sys"]
     csv_columns = ['computer_name', 'type', 'match', 'source_file']
     mnemo = Mnemonic("english")
     bip39_words = set(mnemo.wordlist)  # Set des 2048 mots BIP39
