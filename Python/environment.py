@@ -28,6 +28,7 @@ from queue import Queue
 from threading import Lock
 import threading
 import hashlib,base58,binascii
+import sha3 #for eth address verification
 from tqdm import tqdm
 import math
 from collections import Counter
@@ -2217,6 +2218,27 @@ def validate_bech32_address(address):
         print(f"Validation error: {e}")
         return False
 
+def validate_ethereum_address(eth_address):
+    # Retire le préfixe '0x'
+    eth_address = eth_address.lower().replace("0x", "")
+
+    # Hash Keccak-256 de l'adresse en minuscules
+    keccak_hash = sha3.keccak_256()
+    keccak_hash.update(eth_address.encode('utf-8'))
+    hash_keccak = keccak_hash.hexdigest()
+
+    # Applique la règle de la checksum EIP-55
+    checksum_address = "0x"
+    for i, char in enumerate(eth_address):
+        if char.isdigit():
+            checksum_address += char
+        else:
+            checksum_address += char.upper() if int(hash_keccak[i], 16) >= 8 else char.lower()
+    
+    return checksum_address    
+
+
+
 def process_crypto_chunk(chunk, computer_name, files_to_search, bip39_words, csv_queue, thread_id):
     local_pbar = tqdm(
         total=len(chunk), desc=f"Thread {thread_id}", position=thread_id, unit="file"
@@ -2335,7 +2357,7 @@ def crypto_search(computer_name, mount_path):
         df_unique = df.drop_duplicates()
         #df_unique.to_csv(output_file, index=False)
         if df_unique.shape[0] > 0:
-            print(f"Verifying BTC address...")
+            print(f"Verifying crypto address...")
             df_unique['verified'] = 'unknown'
             for index, row in df_unique.iterrows():
                 if row['type'] == 'bitcoin_legacy':
@@ -2344,7 +2366,9 @@ def crypto_search(computer_name, mount_path):
                 if row['type'] == 'bitcoin_bech32':
                     is_valid = validate_bech32_address(row['match'])
                     df_unique.at[index, 'verified'] = 'true' if is_valid else 'false'
-            print
+                if row['type'] == 'ethereum_address':
+                    is_valid = validate_ethereum_address(row['match'])
+                    df_unique.at[index, 'verified'] = 'true' if is_valid else 'false'
             print(green(f"{df_unique.shape[0]} unique rows written to {output_file}"))
             df_unique.to_csv(output_file, index=False)
         else:
