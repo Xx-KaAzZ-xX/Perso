@@ -20,6 +20,8 @@ rule Detect_Crypto_Elements {
         $privateEscapeWalletNodeBIP32 = /\bx\x00p\x00r\x00v\x00([a-km-zA-HJ-NP-Z1-9]\x00){107,108}\b/
         $publicWalletNodeBIP32 = /\bxpub[a-km-zA-HJ-NP-Z1-9]{107,108}\b/
         $publicEscapeWalletNodeBIP32 = /\bx\x00p\x00u\x00b\x00([a-km-zA-HJ-NP-Z1-9]\x00){107,108}\b/
+        $ethereum_address = /\b0x[a-fA-F0-9]{40}\b/
+        $ethereum_address_unicode = /\b0\x00x\x00([a-fA-F0-9]\x00){40}\b/
         $md5 = /\b[a-f0-9]{32}\b/ // Pattern for MD5 hashes
 
     condition:
@@ -28,6 +30,6 @@ rule Detect_Crypto_Elements {
             ($bitcoin_legacy or $bitcoin_p2sh or $bitcoin_bech32 or $bitcoin_taproot or $monero or $litecoin_legacy or $litecoin_bech32 or
             $privateKeyBIP38 or $privateKeyEscapeBIP38 or $privateKeyWIFuncompressed or $privateKeyEscapeWIFuncompressed or
             $privateKeyWIFcompressed or $privateKeyEscapeWIFcompressed or $privateWalletNodeBIP32 or $privateEscapeWalletNodeBIP32 or
-            $publicWalletNodeBIP32 or $publicEscapeWalletNodeBIP32) and not $md5)
+            $publicWalletNodeBIP32 or $publicEscapeWalletNodeBIP32 or $ethereum_address or $ethereum_address_unicode) and not $md5)
 }
 
