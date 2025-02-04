@@ -2021,7 +2021,7 @@ def analyze_yara(computer_name, file_path, rule):
         match_info = re.match(r"0x[\da-f]+:\$(\w+): (.+)", line)
         if match_info:
             match_count += 1
-            if match_count == 10:
+            if match_count == 40:
                 return results
                 break
             if rule == "yara/script_rule.yar":
@@ -2044,15 +2044,15 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
         total=len(chunk), desc=f"Thread {thread_id}", position=thread_id, unit="file"
     )
     try:
-        #file_to_analyze_per_chunk = f"thread_{thread_id}_files.txt"
+        file_to_analyze_per_chunk = f"thread_{thread_id}_files.txt"
         for file_path in chunk:
             result = {"computer_name": computer_name, "match": "", "source_file": file_path}
             yara_result = []
             rule = "yara/files_rule.yar"
             extension = Path(file_path).suffix
-            #with open(file_to_analyze_per_chunk, "a") as file:
-                #output = f"{file_path}\n"
-                #file.write(output)
+            with open(file_to_analyze_per_chunk, "a") as file:
+                output = f"{file_path}\n"
+                file.write(output)
 
             # Exclude Linux documentation files
             if "/doc/" in file_path or "/usr/share/" in file_path or "/usr/lib" in file_path:
@@ -2068,7 +2068,7 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
                 if yara_result:
                     for item in yara_result:
                         csv_queue.put(item)
-            elif "ibd" in extension or "sql" in extension or "db" in extension:
+            elif "ibd" in extension or "sql" in extension or "mdb" in extension:
                 result.update({"type": "database_file"})
                 csv_queue.put(result)
             elif "dmp" in extension:
@@ -2095,8 +2095,8 @@ def get_files_of_interest(mount_path, computer_name):
 
     output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
     files_to_search = ['wallet.*', '*.wallet', "*.kdbx", "*.sql", "*.ibd"]
-    file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.bson", "*.json", "*.dat", "*.sh", "*.ps1", "*.py", "*.pl"]
-    num_threads = 4
+    file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.mdb", "*.psql", "*.pgsql" "*.bson", "*.json", "*.dat", "*.db", "*.sqlite", "*.dmp", "pagefile.sys", "*.sh", "*.ps1", "*.py", "*.pl"]
+    num_threads = 6
 
     # Collect all files
     files_found = []
@@ -2311,7 +2311,7 @@ def crypto_search(computer_name, mount_path):
     csv_columns = ['computer_name', 'type', 'match', 'source_file']
     mnemo = Mnemonic("english")
     bip39_words = set(mnemo.wordlist)  # Set des 2048 mots BIP39
-    num_threads = 4
+    num_threads = 6
 
     # Collect all files
     files_found = []
