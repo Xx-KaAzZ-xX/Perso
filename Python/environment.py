@@ -23,7 +23,7 @@ import base58
 from bech32 import bech32_decode, convertbits
 import json
 import magic
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Queue
 from threading import Lock
 import threading
@@ -129,7 +129,8 @@ def get_system_info(mount_path):
                 for line in f:
                     if line.startswith('nameserver'):
                         dns_servers.append(line.split()[1])
-            dns_server = ', '.join(dns_servers) if dns_servers else "Unknown"
+        else:
+            dns_server= "Unknown"
 
         # Extraction du serveur NTP
         ntp_server = None
@@ -420,7 +421,7 @@ def list_installed_apps(mount_path, computer_name):
     print(yellow("[+] Retrieving installed apps..."))
 
     with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
-        fieldnames = ['computer_name', 'package_name', 'install_date']
+        fieldnames = ['computer_name', 'package_name', 'install_date', 'version']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         counter = 0
@@ -434,17 +435,37 @@ def list_installed_apps(mount_path, computer_name):
 
             # Pour Debian/Ubuntu
             if distro in ["debian", "ubuntu", "kali"]:
-                chroot_command = "zgrep 'install' /var/log/dpkg.log* | sort | cut -f1,2,4 -d' '"
+                chroot_command = "zgrep 'install\\|upgrade' /var/log/dpkg.log* | sort"
+                #chroot_command = "zgrep 'install' /var/log/dpkg.log* | sort | cut -f1,2,4 -d' '"
                 result, _ = chroot_and_run_command(mount_path, chroot_command)
+                #print(f"{result}")
+                # Regex pour capturer le nom du paquet et la version
+                date_pattern = r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})"
+                package_pattern = r"([a-zA-Z0-9\.\-]+):([a-zA-Z0-9\-\.]+) ([^\s]+)"
 
                 if result:
                     for line in result.splitlines():
-                        parts = line.split()
-                        if len(parts) == 3:
-                            install_date = parts[0] + " " + parts[1]
-                            package_name = parts[2]
-                            writer.writerow({'computer_name' : computer_name, 'package_name': package_name, 'install_date': install_date})
-                            counter += 1
+                        date_match = re.search(date_pattern, line)
+                        if date_match:
+                            install_date = date_match.group(1)
+                        else:
+                            install_date = None
+                        after_date = line.split(" ", 2)[-1]  # Après la date et le statut
+                        package_match = re.search(package_pattern, after_date)
+                        if package_match:
+                            package_name = package_match.group(1)
+                            version = package_match.group(3)
+                        else:
+                            package_name = None
+                            version = None
+
+                        writer.writerow({
+                            'computer_name': computer_name,
+                            'package_name': package_name,
+                            'install_date': install_date,
+                            'version': version
+                        })
+                        counter += 1
 
             # Pour RHEL/CentOS/Fedora/AlmaLinux
             elif distro in ["rhel", "centos", "fedora", "almalinux"]:
@@ -676,7 +697,7 @@ def get_firewall_rules(mount_path, computer_name):
 
 def get_linux_browsing_history(mount_path, computer_name):
     output_file = script_path + "/" + result_folder + "/" + "linux_browsing_history.csv"
-    csv_columns = ['computer_name', 'source', 'user', 'link', 'search_date']
+    csv_columns = ['computer_name', 'source', 'user', 'url_title', 'link', 'search_date']
     print(yellow("[+] Retrieving browsing history"))
     with open(output_file, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=csv_columns)
@@ -711,7 +732,7 @@ def get_linux_browsing_history(mount_path, computer_name):
 
                     # Requête pour récupérer l'historique de navigation
                     cursor.execute("""
-                        SELECT moz_places.url, moz_historyvisits.visit_date
+                        SELECT moz_places.url, moz_places.title, moz_historyvisits.visit_date
                         FROM moz_places, moz_historyvisits
                         WHERE moz_places.id = moz_historyvisits.place_id
                     """)
@@ -719,12 +740,13 @@ def get_linux_browsing_history(mount_path, computer_name):
 
                     # Traiter les résultats et les écrire dans le fichier CSV
                     for row in firefox_rows:
-                        url, visit_time = row
+                        url, url_title, visit_time = row
                         visit_date = convert_firefox_time(visit_time)
                         writer.writerow({
                             'computer_name': computer_name,
                             'source': 'Firefox',
                             'user': user,  # Ajuste le nom de l'utilisateur si nécessaire
+                            'url_title': url_title,
                             'link': url,
                             'search_date': visit_date
                         })
@@ -1706,7 +1728,7 @@ def convert_firefox_time(firefox_timestamp):
 
 def get_windows_browsing_history(mount_path, computer_name):
     output_file = script_path + "/" + result_folder + "/" + "windows_browsing_history.csv"
-    csv_columns = ['computer_name', 'source', 'user', 'link', 'search_date']
+    csv_columns = ['computer_name', 'source', 'user', 'url_title', 'link', 'search_date']
     print(yellow("[+] Retrieving browsing history"))
     temp_file = "/tmp/places_temp.sqlite"
 
@@ -1728,17 +1750,18 @@ def get_windows_browsing_history(mount_path, computer_name):
                     # Open the Chrome History SQLite file
                     conn = sqlite3.connect(chrome_history_path)
                     cursor = conn.cursor()
-                    cursor.execute("SELECT urls.url, visits.visit_time FROM urls, visits WHERE urls.id = visits.url")
+                    cursor.execute("SELECT urls.url, urls.title, visits.visit_time FROM urls, visits WHERE urls.id = visits.url")
                     chrome_rows = cursor.fetchall()
 
                     for row in chrome_rows:
-                        url, visit_time = row
+                        url, url_title, visit_time = row
                         visit_date = convert_chrome_time(visit_time)
                         writer.writerow({
                             'computer_name': computer_name,
                             'source': 'Chrome',
                             'user': user,
                             'link': url,
+                            'url_title': url_title,
                             'search_date': visit_date
                         })
                         counter += 1
@@ -1764,20 +1787,21 @@ def get_windows_browsing_history(mount_path, computer_name):
                             cursor = conn.cursor()
                             # Requête pour récupérer l'historique de navigation
                             cursor.execute("""
-                                SELECT moz_places.url, moz_historyvisits.visit_date
+                                SELECT moz_places.url, moz_places.title, moz_historyvisits.visit_date
                                 FROM moz_places, moz_historyvisits
                                 WHERE moz_places.id = moz_historyvisits.place_id
                             """)
                             firefox_rows = cursor.fetchall()
                             # Traiter les résultats et les écrire dans le fichier CSV
                             for row in firefox_rows:
-                                url, visit_time = row
+                                url, url_title, visit_time = row
                                 visit_date = convert_firefox_time(visit_time)
                                 writer.writerow({
                                     'computer_name': computer_name,
                                     'source': 'Firefox',
                                     'user': user,  # Ajuste le nom de l'utilisateur si nécessaire
                                     'link': url,
+                                    'url_title': url_title,
                                     'search_date': visit_date
                                 })
                                 counter += 1
@@ -2044,15 +2068,15 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
         total=len(chunk), desc=f"Thread {thread_id}", position=thread_id, unit="file"
     )
     try:
-        file_to_analyze_per_chunk = f"thread_{thread_id}_files.txt"
+        #file_to_analyze_per_chunk = f"thread_{thread_id}_files.txt"
         for file_path in chunk:
             result = {"computer_name": computer_name, "match": "", "source_file": file_path}
             yara_result = []
             rule = "yara/files_rule.yar"
             extension = Path(file_path).suffix
-            with open(file_to_analyze_per_chunk, "a") as file:
-                output = f"{file_path}\n"
-                file.write(output)
+            #with open(file_to_analyze_per_chunk, "a") as file:
+                #output = f"{file_path}\n"
+                #file.write(output)
 
             # Exclude Linux documentation files
             if "/doc/" in file_path or "/usr/share/" in file_path or "/usr/lib" in file_path:
@@ -2068,7 +2092,37 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
                 if yara_result:
                     for item in yara_result:
                         csv_queue.put(item)
-            elif "ibd" in extension or "sql" in extension or "mdb" in extension:
+            elif "ibd" in extension or "frm" in extension:
+                db_name = Path(file_path).parent.name  # Récupère le dossier parent comme nom de la DB
+                if not result["match"]:
+                    result["match"] = []  # Initialise une liste si vide
+                elif not isinstance(result["match"], list):
+                    result["match"] = [result["match"]]  # Convertit en liste si c'est une seule valeur
+                if db_name not in result["match"]:
+                    result["match"].append(db_name)
+                result.update({"type": "database_mysql"})
+                csv_queue.put(result)
+            elif "fsm" in extension or "tbl" in extension:
+                db_name = Path(file_path).parent.name  # Récupère le dossier parent comme nom de la DB
+                if not result["match"]:
+                    result["match"] = []  # Initialise une liste si vide
+                elif not isinstance(result["match"], list):
+                    result["match"] = [result["match"]]  # Convertit en liste si c'est une seule valeur
+                if db_name not in result["match"]:
+                    result["match"].append(db_name)
+                result.update({"type": "database_postgresql"})
+                csv_queue.put(result)
+            elif "mdf" in extension or "ndf" in extension or "ldf" in extension:
+                db_name = Path(file_path).parent.name  # Récupère le dossier parent comme nom de la DB
+                if not result["match"]:
+                    result["match"] = []  # Initialise une liste si vide
+                elif not isinstance(result["match"], list):
+                    result["match"] = [result["match"]]  # Convertit en liste si c'est une seule valeur
+                if db_name not in result["match"]:
+                    result["match"].append(db_name)
+                result.update({"type": "database_SQL_server"})
+                csv_queue.put(result)
+            elif "sql" in extension or "psql" in extension:
                 result.update({"type": "database_file"})
                 csv_queue.put(result)
             elif "dmp" in extension:
@@ -2087,15 +2141,17 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
     finally:
         local_pbar.close()
 
-
+'''
 def get_files_of_interest(mount_path, computer_name):
     run_find_crypto = input("Do you want to launch some files of interest & crypto stuff research? It will be quite long? (yes/no): ").strip().lower()
     if run_find_crypto != "yes":
         return
 
     output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
-    files_to_search = ['wallet.*', '*.wallet', "*.kdbx", "*.sql", "*.ibd"]
-    file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.mdb", "*.psql", "*.pgsql" "*.bson", "*.json", "*.dat", "*.db", "*.sqlite", "*.dmp", "pagefile.sys", "*.sh", "*.ps1", "*.py", "*.pl"]
+    ## files_to_search => juste si y'a la présence du fichier, on le signale
+    files_to_search = ['wallet.*', '*.wallet', "*.kdbx"]
+    ## files_types_to_search => ici, ça passe au scan yara "files" et "script"
+    file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.mdb", "*.psql", "*.pgsql", "*.frm", "*.tbl", "*.mdf", "*.ndf", "*.ldf", "*.bson", "*.json", "*.dat", "*.db", "*.sqlite", "*.dmp", "pagefile.sys", "*.sh", "*.ps1", "*.py", "*.pl"]
     num_threads = 6
 
     # Collect all files
@@ -2108,6 +2164,41 @@ def get_files_of_interest(mount_path, computer_name):
     find_cmd_no_extension = f"find {mount_path} -type f ! -name '*.*'"
     result_no_extension = subprocess.run(find_cmd_no_extension, shell=True, capture_output=True, text=True)
     files_found.extend(result_no_extension.stdout.splitlines())
+
+
+'''
+def find_files_chunk(mount_path, file_pattern):
+    ##Exécute une commande find pour un pattern donné et retourne les fichiers trouvés.
+    find_cmd = f"find {mount_path} -type f -name '{file_pattern}'"
+    result = subprocess.run(find_cmd, shell=True, capture_output=True, text=True)
+    return result.stdout.splitlines()
+
+def get_files_of_interest(mount_path, computer_name):
+    run_find_crypto = input("Do you want to launch some files of interest & crypto stuff research? It will be quite long? (yes/no): ").strip().lower()
+    if run_find_crypto != "yes":
+        return
+
+    output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
+    files_to_search = ['wallet.*', '*.wallet', "*.kdbx"]
+    file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.mdb", "*.psql", "*.pgsql", "*.frm",
+                            "*.tbl", "*.mdf", "*.ndf", "*.ldf", "*.bson", "*.json", "*.dat", "*.db", "*.sqlite",
+                            "*.dmp", "pagefile.sys", "*.sh", "*.ps1", "*.py", "*.pl"]
+
+    num_threads = 6
+    files_found = []
+
+    # Lancer la recherche en parallèle
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        futures = {executor.submit(find_files_chunk, mount_path, pattern): pattern for pattern in files_to_search + file_types_to_search}
+
+        for future in as_completed(futures):
+            files_found.extend(future.result())
+
+    # Ajouter les fichiers sans extension en parallèle
+    find_cmd_no_extension = f"find {mount_path} -type f ! -name '*.*'"
+    result_no_extension = subprocess.run(find_cmd_no_extension, shell=True, capture_output=True, text=True)
+    files_found.extend(result_no_extension.stdout.splitlines())
+
 
     # Split files into chunks for multithreading
     chunk_size = len(files_found) // num_threads + 1
@@ -2307,6 +2398,7 @@ def crypto_search(computer_name, mount_path):
         "wallet.dat", "electrum.dat", "default_wallet", "keystore", "wallet.json",
         "UTC--", "blockchain_wallet", "keyfile", "bitcoincash.dat", "monero-wallet.dat"
     ]
+    ## ici, ça passe au scan yara "crypto"
     file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.mdb", "*.psql", "*.pgsql" "*.bson", "*.json", "*.dat", "*.db", "*.sqlite", "*.dmp", "pagefile.sys"]
     csv_columns = ['computer_name', 'type', 'match', 'source_file']
     mnemo = Mnemonic("english")
@@ -2350,8 +2442,7 @@ def crypto_search(computer_name, mount_path):
         while not csv_queue.empty():
             writer.writerow(csv_queue.get())
 
-    # Optional: Remove duplicates
-    print("[+] Removing duplicates in CSV...")
+    print("[+] Cleaning {output_file}...")
     try:
         df = pd.read_csv(output_file)
         df_unique = df.drop_duplicates()
@@ -2369,6 +2460,8 @@ def crypto_search(computer_name, mount_path):
                 if row['type'] == 'ethereum_address':
                     is_valid = validate_ethereum_address(row['match'])
                     df_unique.at[index, 'verified'] = 'true' if is_valid else 'false'
+            # Filtrer les lignes où 'verified' est 'false'
+            df_unique = df_unique[df_unique['verified'] != 'false']
             print(green(f"{df_unique.shape[0]} unique rows written to {output_file}"))
             df_unique.to_csv(output_file, index=False)
         else:
