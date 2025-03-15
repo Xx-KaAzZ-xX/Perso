@@ -1774,14 +1774,13 @@ def get_windows_browsing_history(mount_path, computer_name):
     output_file = script_path + "/" + result_folder + "/" + "windows_browsing_history.csv"
     csv_columns = ['computer_name', 'source', 'user', 'url_title', 'link', 'search_date']
     print(yellow("[+] Retrieving browsing history"))
-    temp_file = "/tmp/places_temp.sqlite"
+    temp_file = "/tmp/temp_history.sqlite"
 
-    # Ouvrir le fichier CSV pour écrire les résultats
     with open(output_file, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=csv_columns)
         writer.writeheader()
         counter = 0
-        # Parcourir les utilisateurs dans le répertoire Users
+
         users_dir = os.path.join(mount_path, 'Users')
         for user in os.listdir(users_dir):
             user_dir = os.path.join(users_dir, user)
@@ -1789,77 +1788,72 @@ def get_windows_browsing_history(mount_path, computer_name):
             # 1. Google Chrome
             chrome_history_path = os.path.join(user_dir, 'AppData/Local/Google/Chrome/User Data/Default/History')
             if os.path.exists(chrome_history_path):
-
                 try:
-                    # Open the Chrome History SQLite file
                     conn = sqlite3.connect(chrome_history_path)
                     cursor = conn.cursor()
                     cursor.execute("SELECT urls.url, urls.title, visits.visit_time FROM urls, visits WHERE urls.id = visits.url")
-                    chrome_rows = cursor.fetchall()
-
-                    for row in chrome_rows:
-                        url, url_title, visit_time = row
+                    for url, url_title, visit_time in cursor.fetchall():
                         visit_date = convert_chrome_time(visit_time)
                         writer.writerow({
-                            'computer_name': computer_name,
-                            'source': 'Chrome',
-                            'user': user,
-                            'link': url,
-                            'url_title': url_title,
-                            'search_date': visit_date
+                            'computer_name': computer_name, 'source': 'Chrome', 'user': user,
+                            'link': url, 'url_title': url_title, 'search_date': visit_date
                         })
                         counter += 1
-
                     conn.close()
                 except Exception as e:
                     print(red(f"Error processing Chrome history: {e}"))
 
-            #2. Firefox
+            # 2. Firefox
             firefox_profile_dir = os.path.join(user_dir, 'AppData/Roaming/Mozilla/Firefox/Profiles')
             if os.path.exists(firefox_profile_dir):
                 for profile in os.listdir(firefox_profile_dir):
                     places_db = os.path.join(firefox_profile_dir, profile, 'places.sqlite')
                     if os.path.exists(places_db):
-                        #print(f"[+] Firefox file found: {places_db}")
                         try:
-                            # Copier le fichier places.sqlite dans /tmp
                             shutil.copyfile(places_db, temp_file)
-                            #print(f"[+] Copied Firefox history to temporary file: {temp_file}")
-
-                            # Connexion à la copie temporaire de la base de données Firefox
                             conn = sqlite3.connect(temp_file)
                             cursor = conn.cursor()
-                            # Requête pour récupérer l'historique de navigation
                             cursor.execute("""
                                 SELECT moz_places.url, moz_places.title, moz_historyvisits.visit_date
                                 FROM moz_places, moz_historyvisits
                                 WHERE moz_places.id = moz_historyvisits.place_id
                             """)
-                            firefox_rows = cursor.fetchall()
-                            # Traiter les résultats et les écrire dans le fichier CSV
-                            for row in firefox_rows:
-                                url, url_title, visit_time = row
+                            for url, url_title, visit_time in cursor.fetchall():
                                 visit_date = convert_firefox_time(visit_time)
                                 writer.writerow({
-                                    'computer_name': computer_name,
-                                    'source': 'Firefox',
-                                    'user': user,  # Ajuste le nom de l'utilisateur si nécessaire
-                                    'link': url,
-                                    'url_title': url_title,
-                                    'search_date': visit_date
+                                    'computer_name': computer_name, 'source': 'Firefox', 'user': user,
+                                    'link': url, 'url_title': url_title, 'search_date': visit_date
                                 })
                                 counter += 1
-
-                            # Fermer la connexion à la base de données
                             conn.close()
-
                         except Exception as e:
                             print(red(f"Error processing Firefox history: {e}"))
-
                         finally:
                             if os.path.exists(temp_file):
                                 os.remove(temp_file)
-                                #print(f"[+] Temporary file {temp_file} has been deleted.")
+
+            # 3. Microsoft Edge
+            edge_history_path = os.path.join(user_dir, 'AppData/Local/Microsoft/Edge/User Data/Default/History')
+            if os.path.exists(edge_history_path):
+                try:
+                    conn = sqlite3.connect(edge_history_path)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT urls.url, urls.title, visits.visit_time FROM urls, visits WHERE urls.id = visits.url")
+                    for url, url_title, visit_time in cursor.fetchall():
+                        visit_date = convert_chrome_time(visit_time)
+                        writer.writerow({
+                            'computer_name': computer_name, 'source': 'Edge', 'user': user,
+                            'link': url, 'url_title': url_title, 'search_date': visit_date
+                        })
+                        counter += 1
+                    conn.close()
+                except Exception as e:
+                    print(red(f"Error processing Edge history: {e}"))
+
+                finally:
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
+                        #print(f"[+] Temporary file {temp_file} has been deleted.")
     if counter >= 1:
         print(green(f"Browsing history has been written into {output_file}"))
     else:
@@ -2146,12 +2140,17 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
             if "kdb" in extension:
                 result.update({"type": "keepass_file"})
                 csv_queue.put(result)
+            elif "tox" in extension:
+                result.update({"type": "qTox_file"})
+                csv_queue.put(result)
             elif "ps1" in extension or "py" in extension or "pl" in extension or "sh" in extension:
                 rule = "yara/script_rule.yar"
                 yara_result = analyze_yara(computer_name, file_path, rule)
                 if yara_result:
                     for item in yara_result:
                         csv_queue.put(item)
+            '''
+            ## il faut modifier ce bloc qui actuellement est pas fou pour les BDD SQLServer
             elif "ibd" in extension or "frm" in extension:
                 db_name = Path(file_path).parent.name  # Récupère le dossier parent comme nom de la DB
                 if not result["match"]:
@@ -2162,6 +2161,7 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
                     result["match"].append(db_name)
                 result.update({"type": "database_mysql"})
                 csv_queue.put(result)
+            '''
             elif "fsm" in extension or "tbl" in extension:
                 db_name = Path(file_path).parent.name  # Récupère le dossier parent comme nom de la DB
                 if not result["match"]:
@@ -2201,32 +2201,6 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
     finally:
         local_pbar.close()
 
-'''
-def get_files_of_interest(mount_path, computer_name):
-    run_find_crypto = input("Do you want to launch some files of interest & crypto stuff research? It will be quite long? (yes/no): ").strip().lower()
-    if run_find_crypto != "yes":
-        return
-
-    output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
-    ## files_to_search => juste si y'a la présence du fichier, on le signale
-    files_to_search = ['wallet.*', '*.wallet', "*.kdbx"]
-    ## files_types_to_search => ici, ça passe au scan yara "files" et "script"
-    file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.mdb", "*.psql", "*.pgsql", "*.frm", "*.tbl", "*.mdf", "*.ndf", "*.ldf", "*.bson", "*.json", "*.dat", "*.db", "*.sqlite", "*.dmp", "pagefile.sys", "*.sh", "*.ps1", "*.py", "*.pl"]
-    num_threads = 6
-
-    # Collect all files
-    files_found = []
-    for file_type in files_to_search + file_types_to_search:
-        find_cmd = f"find {mount_path} -type f -name '{file_type}'"
-        result_find = subprocess.run(find_cmd, shell=True, capture_output=True, text=True)
-        files_found.extend(result_find.stdout.splitlines())
-
-    find_cmd_no_extension = f"find {mount_path} -type f ! -name '*.*'"
-    result_no_extension = subprocess.run(find_cmd_no_extension, shell=True, capture_output=True, text=True)
-    files_found.extend(result_no_extension.stdout.splitlines())
-
-
-'''
 def find_files_chunk(mount_path, file_pattern):
     ##Exécute une commande find pour un pattern donné et retourne les fichiers trouvés.
     find_cmd = f"find {mount_path} -type f -name '{file_pattern}'"
@@ -2239,7 +2213,7 @@ def get_files_of_interest(mount_path, computer_name):
         return
 
     output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
-    files_to_search = ['wallet.*', '*.wallet', "*.kdbx"]
+    files_to_search = ['wallet.*', '*.wallet', "*.kdbx", '*.tox']
     file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.mdb", "*.psql", "*.pgsql", "*.frm",
                             "*.tbl", "*.mdf", "*.ndf", "*.ldf", "*.bson", "*.json", "*.dat", "*.db", "*.sqlite",
                             "*.dmp", "pagefile.sys", "*.sh", "*.ps1", "*.py", "*.pl"]
