@@ -800,6 +800,22 @@ def get_linux_browsing_data(mount_path, computer_name):
                             'saved_date': saved_date
                         })
                         counter += 1
+                    cursor.execute("SELECT origin_domain, username_value, update_time FROM stats")
+                    chrome_rows = cursor.fetchall()
+                    for row in chrome_rows:
+                        url, username, update_time = row
+                        saved_date = convert_chrome_time(update_time)
+                        writer.writerow({
+                            'computer_name': computer_name,
+                            'source': 'Chrome (stats table)',
+                            'user': "",
+                            'ident': username,
+                            'creds': "",  # The password is encrypted; decryption may require OS-specific methods
+                            'platform': url,
+                            'saved_date': update_time
+                        })
+                        counter += 1
+ 
 
                     conn.close()
                 except Exception as e:
@@ -1076,11 +1092,27 @@ def get_windows_disk_volumes(mount_path):
         print("No disk information found in any path.")
 
 
+def decode_product_key(digital_product_id):
+    key_offset = 52  # Position du début de la clé dans DigitalProductId
+    chars = "BCDFGHJKMPQRTVWXY2346789"  # Alphabet de 24 caractères
+    key = []
+    
+    for i in range(25):
+        current = 0
+        for j in range(14, -1, -1):
+            current = current * 256 + digital_product_id[key_offset + j]
+            digital_product_id[key_offset + j] = current // 24
+            current = current % 24
+        key.insert(0, chars[current])
+    
+    for i in range(4, 25, 5):
+        key.insert(i, "-")
 
+    return "".join(key)
 
 def get_windows_info(mount_path, computer_name):
     output_file = script_path + "/" + result_folder + "/" + "windows_system_info.csv"  # Assurez-vous que result_folder est défini si nécessaire
-    csv_columns = ['computer_name', 'windows_version', 'installation_date', 'ntp_server', 'last_update', 'last_event', 'keyboard_layout']
+    csv_columns = ['computer_name', 'windows_version', 'installation_date', 'ntp_server', 'last_update', 'last_event', 'keyboard_layout', 'license_key']
 
     # Initialisation des variables
     system_info = {
@@ -1090,7 +1122,8 @@ def get_windows_info(mount_path, computer_name):
         'ntp_server': '',
         'last_update': '',
         'last_event': '',
-        'keyboard_layout': ''
+        'keyboard_layout': '',
+        'license_key': ''
     }
     print(yellow(f"[+] Retrieving system information..."))
     # Récupération des informations NTP (dans le registre SYSTEM)
@@ -1138,6 +1171,17 @@ def get_windows_info(mount_path, computer_name):
                 install_date_timestamp = value.value()
                 date_time = datetime.fromtimestamp(install_date_timestamp)
                 system_info['installation_date'] = date_time.strftime("%Y-%m-%d %H:%M:%S")
+            elif value.name() == "DigitalProductId":
+                digital_product_id = value.value()
+                #print(digital_product_id)
+                if len(digital_product_id) == 15:  # Windows 7 et antérieurs
+                    deciphered_digital_product_id = digital_product_id.decode(errors='ignore')  # En clair
+                    print(deciphered_digital_product_id)
+                    system_info['license_key'] = deciphered_digital_product_id
+                else:  # Windows 8+
+                    deciphered_digital_product_id = decode_product_key(bytearray(digital_product_id))
+                    print(deciphered_digital_product_id)
+                    system_info['license_key'] = deciphered_digital_product_id
     except Exception as e:
         print(red(f"[-]Error retrieving system installation information: {e}"))
 
@@ -1850,7 +1894,7 @@ def get_windows_browsing_data(mount_path, computer_name):
                         saved_date = convert_chrome_time(date_created)
                         writer.writerow({
                             'computer_name': computer_name,
-                            'source': 'Chrome',
+                            'source': 'Chrome (logins table)',
                             'user': user,
                             'ident': username,
                             'creds': password,  # The password is encrypted; decryption may require OS-specific methods
@@ -1858,6 +1902,22 @@ def get_windows_browsing_data(mount_path, computer_name):
                             'saved_date': saved_date
                         })
                         counter += 1
+                    cursor.execute("SELECT origin_domain, username_value, update_time FROM stats")
+                    chrome_rows = cursor.fetchall()
+                    for row in chrome_rows:
+                        url, username, update_time = row
+                        saved_date = convert_chrome_time(update_time)
+                        writer.writerow({
+                            'computer_name': computer_name,
+                            'source': 'Chrome (stats table)',
+                            'user': "",
+                            'ident': username,
+                            'creds': "",  # The password is encrypted; decryption may require OS-specific methods
+                            'platform': url,
+                            'saved_date': update_time
+                        })
+                        counter += 1
+ 
 
                     conn.close()
                 except Exception as e:
