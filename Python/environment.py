@@ -1176,7 +1176,7 @@ def get_windows_info(mount_path, computer_name):
                 #print(digital_product_id)
                 if len(digital_product_id) == 15:  # Windows 7 et antérieurs
                     deciphered_digital_product_id = digital_product_id.decode(errors='ignore')  # En clair
-                    print(deciphered_digital_product_id)
+                    #print(deciphered_digital_product_id)
                     system_info['license_key'] = deciphered_digital_product_id
                 else:  # Windows 8+
                     deciphered_digital_product_id = decode_product_key(bytearray(digital_product_id))
@@ -2149,7 +2149,6 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
                 if yara_result:
                     for item in yara_result:
                         csv_queue.put(item)
-            '''
             ## il faut modifier ce bloc qui actuellement est pas fou pour les BDD SQLServer
             elif "ibd" in extension or "frm" in extension:
                 db_name = Path(file_path).parent.name  # Récupère le dossier parent comme nom de la DB
@@ -2161,7 +2160,6 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
                     result["match"].append(db_name)
                 result.update({"type": "database_mysql"})
                 csv_queue.put(result)
-            '''
             elif "fsm" in extension or "tbl" in extension:
                 db_name = Path(file_path).parent.name  # Récupère le dossier parent comme nom de la DB
                 if not result["match"]:
@@ -2172,16 +2170,38 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
                     result["match"].append(db_name)
                 result.update({"type": "database_postgresql"})
                 csv_queue.put(result)
-            elif "mdf" in extension or "ndf" in extension or "ldf" in extension:
-                db_name = Path(file_path).parent.name  # Récupère le dossier parent comme nom de la DB
-                if not result["match"]:
-                    result["match"] = []  # Initialise une liste si vide
-                elif not isinstance(result["match"], list):
-                    result["match"] = [result["match"]]  # Convertit en liste si c'est une seule valeur
-                if db_name not in result["match"]:
-                    result["match"].append(db_name)
-                result.update({"type": "database_SQL_server"})
-                csv_queue.put(result)
+            elif extension in {"mdf", "ndf", "ldf"}:
+                parent_dir = Path(file_path).parent
+                mdf_files = list(parent_dir.glob("*.mdf"))
+                ldf_files = list(parent_dir.glob("*.ldf"))
+                if mdf_files:  # Vérifie qu'il y a bien un .mdf, qui est le cœur de la DB
+                    for mdf in mdf_files:
+                        db_name = mdf.stem  # Récupère le nom de fichier sans extension (nom de la DB)
+                        if not result["match"]:
+                            result["match"] = []
+                        elif not isinstance(result["match"], list):
+                            result["match"] = [result["match"]]
+                        if db_name not in result["match"]:
+                            result["match"].append(db_name)
+                    result.update({"type": "database_sqlserver"})
+                    csv_queue.put(result)
+            elif extension in {"mdf", "ndf", "ldf"}:
+                parent_dir = Path(file_path).parent
+                mdf_files = list(parent_dir.glob("*.mdf"))
+                ldf_files = list(parent_dir.glob("*.ldf"))
+            
+                if mdf_files:  # Vérifie qu'il y a bien un .mdf, qui est le cœur de la DB
+                    for mdf in mdf_files:
+                        db_name = mdf.stem  # Récupère le nom de fichier sans extension (nom de la DB)
+                        if not result["match"]:
+                            result["match"] = []
+                        elif not isinstance(result["match"], list):
+                            result["match"] = [result["match"]]
+                        if db_name not in result["match"]:
+                            result["match"].append(db_name)
+            
+                    result.update({"type": "database_sqlserver"})
+                    csv_queue.put(result)
             elif "sql" in extension or "psql" in extension:
                 result.update({"type": "database_file"})
                 csv_queue.put(result)
