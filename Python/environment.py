@@ -2121,6 +2121,7 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
     local_pbar = tqdm(
         total=len(chunk), desc=f"Thread {thread_id}", position=thread_id, unit="file"
     )
+    min_sql_size = 1 * 1024**3 #1Go min
     try:
         #file_to_analyze_per_chunk = f"thread_{thread_id}_files.txt"
         for file_path in chunk:
@@ -2158,6 +2159,7 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
                     result["match"] = [result["match"]]  # Convertit en liste si c'est une seule valeur
                 if db_name not in result["match"]:
                     result["match"].append(db_name)
+                #print(db_name)
                 result.update({"type": "database_mysql"})
                 csv_queue.put(result)
             elif "fsm" in extension or "tbl" in extension:
@@ -2202,9 +2204,14 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
             
                     result.update({"type": "database_sqlserver"})
                     csv_queue.put(result)
-            elif "sql" in extension or "psql" in extension:
-                result.update({"type": "database_file"})
+            elif "sqlite" in extension:
+                result.update({"type": "sqlite_file"})
                 csv_queue.put(result)
+            elif "sql" in extension or "psql" in extension:
+                sql_file_size = os.path.getsize(f"{file_path}")
+                if sql_file_size > min_sql_size:
+                    result.update({"type": "database_file"})
+                    csv_queue.put(result)
             elif "dmp" in extension:
                 result.update({"type": "minidump_file"})
                 csv_queue.put(result)
@@ -2297,12 +2304,21 @@ def get_files_of_interest(mount_path, computer_name):
     print("[+] Removing duplicates in CSV...")
     try:
         df = pd.read_csv(output_file)
-        #split empty lines and others
-        empty_match = df[df['match'].isna() | (df['match'] == "")]
-        # remove duplicates only when match is set
-        non_empty_match = df[~(df['match'].isna() | (df['match'] == ""))].drop_duplicates(subset=['match'])
-        # combine both datasets
-        df_unique = pd.concat([empty_match, non_empty_match])
+
+        # Supprimer les doublons basés uniquement sur la colonne "match" (pour les valeurs non vides)
+        df_non_empty_match = df[~df['match'].isna() & (df['match'] != "")].drop_duplicates(subset=['match'])
+
+        # Conserver les entrées où "match" est vide
+        df_empty_match = df[df['match'].isna() | (df['match'] == "")]
+
+        # Fusionner les résultats
+        df_unique = pd.concat([df_empty_match, df_non_empty_match])
+
+        # Supprimer les doublons globaux en prenant en compte toutes les colonnes
+        df_unique = df_unique.drop_duplicates()
+
+
+
         # export to csv
         df_unique.to_csv(output_file, index=False)
         print(green(f"{df_unique.shape[0]} unique rows written to {output_file}"))
