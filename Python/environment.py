@@ -1969,17 +1969,15 @@ def hayabusa_evtx(mount_path, computer_name):
 
 ## This 3 functions are meant to detect VeraCrypt Container
 
-
 def has_no_signature(file_path):
-    # Utilise la bibliothèque `magic` pour récupérer le type MIME du fichier
-    f = magic.Magic(mime=True)
-    file_type = f.from_file(file_path)
+    try:
+        f = magic.Magic()
+        file_type = f.from_file(file_path)
+        return file_type in ["data", "binary data", "application/octet-stream"]
+    except Exception as e:
+        print(f"Erreur lors de la détection de la signature : {e}")
+        return False  # Par défaut, on considère qu'il a une signature en cas d'erreur
 
-    # Vérifie si le type MIME est générique, indiquant potentiellement un fichier sans signature
-    if file_type == "application/octet-stream":
-        return True  # Pas de signature identifiable
-    else:
-        return False
 
 def is_size_divisible_by_512(file_path):
     file_size = os.path.getsize(file_path)
@@ -2122,6 +2120,7 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
         total=len(chunk), desc=f"Thread {thread_id}", position=thread_id, unit="file"
     )
     min_sql_size = 1 * 1024**3 #1Go min
+    min_sql_lite_size = 1 * 1024**2 #1Mo min
     try:
         #file_to_analyze_per_chunk = f"thread_{thread_id}_files.txt"
         for file_path in chunk:
@@ -2205,8 +2204,12 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
                     result.update({"type": "database_sqlserver"})
                     csv_queue.put(result)
             elif "sqlite" in extension:
-                result.update({"type": "sqlite_file"})
-                csv_queue.put(result)
+                if "AppData/Local/Packages" in file_path or "AppData/Roaming/Mozilla/Firefox/Profiles" in file_path:
+                    continue
+                sql_lite_file_size = os.path.getsize(f"{file_path}")
+                if sql_lite_file_size > min_sql_lite_size:
+                    result.update({"type": "sqlite_file"})
+                    csv_queue.put(result)
             elif "sql" in extension or "psql" in extension:
                 sql_file_size = os.path.getsize(f"{file_path}")
                 if sql_file_size > min_sql_size:
@@ -2292,7 +2295,7 @@ def get_files_of_interest(mount_path, computer_name):
             for file_path in large_files:
                 #print(f"Testing signature of {file_path}")
                 #To avoid the pagefile false positive
-                if "pagefile.sys" in file_path:
+                if ".sys" in file_path:
                     continue
                 if has_no_signature(file_path) and is_size_divisible_by_512(file_path):
                     #print(f"Calculing entropy for {file_path}")
