@@ -7,12 +7,14 @@
 #- regripper in the folder of the script
 #- python-regristry : https://github.com/williballenthin/python-registry
 #- and all libraries that are imported 
+#- tabulate pour regipy
 
 import platform
 import pandas as pd
 import struct
 import os
 import requests
+import logging
 import ipaddress
 import re
 import time
@@ -53,6 +55,8 @@ import shutil
 import glob
 import sqlite3
 from crontab import CronSlices
+# for full dump of registry key
+from regipy.registry import RegistryHive
 
 # Chemin vers le système de fichiers monté
 script_name = sys.argv[0]
@@ -1180,7 +1184,7 @@ def get_windows_info(mount_path, computer_name):
                     system_info['license_key'] = deciphered_digital_product_id
                 else:  # Windows 8+
                     deciphered_digital_product_id = decode_product_key(bytearray(digital_product_id))
-                    print(deciphered_digital_product_id)
+                    #print(deciphered_digital_product_id)
                     system_info['license_key'] = deciphered_digital_product_id
     except Exception as e:
         print(red(f"[-]Error retrieving system installation information: {e}"))
@@ -1760,6 +1764,86 @@ def get_windows_scheduled_tasks(mount_path, computer_name):
 
     except Exception as e:
         print(f"[-] Error retrieving scheduled tasks: {e}")
+
+def serialize_entry(entry, computer_name, hive_name):
+    # Sérialiser chaque entrée dans un format de dictionnaire adapté pour CSV
+    return {
+        'computer_name': computer_name,
+        'hive': hive_name,
+        'subkey_name': entry.subkey_name,
+        'path': entry.path,
+        #'timestamp': entry.timestamp.isoformat() if isinstance(entry.timestamp, datetime.datetime) else None,
+        'timestamp': entry.timestamp,
+        'values_count': entry.values_count,
+        'values': [
+            {
+                'name': v.name,
+                'value': v.value,
+                'value_type': v.value_type,
+                'is_corrupted': v.is_corrupted
+            } for v in entry.values
+        ],
+        'actual_path': entry.actual_path
+    }
+
+def get_windows_full_registry(mount_path, computer_name):
+    user_input = input("Do you want to dump the full registry KEYS ? It could be very long. (y/N) ").strip().lower()
+    if user_input == 'y':
+        output_dir = script_path + "/" + result_folder + "/"
+        try:
+            # Liste des hives standards
+            hive_names = ['SYSTEM', 'SOFTWARE', 'SECURITY', 'SAM']
+            ntuser_dirs = []
+
+            # Recherche des NTUSER.DAT
+            user_dir = mount_path + "/Users/"
+            if not os.path.exists(user_dir):
+                print(yellow(f"{user_dir} doesn't exist"))
+            else:
+                for root, _, files in os.walk(user_dir):
+                    for file in files:
+                        if file.upper() == 'NTUSER.DAT':
+                            ntuser_dirs.append(os.path.join(root, file))
+
+            # Ajout des hives standards
+            hive_paths = [os.path.join(mount_path, 'Windows', 'System32', 'config', h) for h in hive_names]
+            hive_paths.extend(ntuser_dirs)
+
+            os.makedirs(output_dir, exist_ok=True)
+
+            for hive_path in hive_paths:
+                if not os.path.exists(hive_path):
+                    print(yellow(f"{hive_path} doesn't exist"))
+                    continue
+
+                hive_name = os.path.basename(hive_path)
+                csv_output = os.path.join(output_dir, f"{hive_name}.csv")
+                print(yellow(f"[+] Dumping {hive_path} hive ..."))
+                hive = RegistryHive(hive_path)
+
+                with open(csv_output, 'w', newline='', encoding='utf-8') as f:
+                    fieldnames = [
+                        'computer_name', 'hive', 'subkey_name', 'path', 'timestamp', 'values_count', 'values', 'actual_path'
+                    ]
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+
+                    # Redirige tous les logs de regipy vers un handler qui ignore tout
+                    logging.getLogger('regipy').addHandler(logging.NullHandler())
+
+                    # Parcourir les sous-clés et sérialiser les entrées
+                    try:
+                        for entry in hive.recurse_subkeys():
+                            #print(entry)
+                            serialized_entry = serialize_entry(entry, computer_name, hive_name)
+                            writer.writerow(serialized_entry)
+                    except Exception as e:
+                        pass
+
+                print(green(f"[+] {hive_name} written in {csv_output}"))
+        except Exception as e:
+            print(red(f"[-] Error when dumping hive file : {e}"))  
+
 
 def convert_chrome_time(chrome_timestamp):
     """ Convert Webkit timestamp (microseconds since 1601) to human-readable date. """
@@ -2606,6 +2690,7 @@ if len(sys.argv) > 1:
             get_windows_installed_programs(mount_path, computer_name)
             get_windows_executed_programs(mount_path, computer_name)
             get_windows_scheduled_tasks(mount_path, computer_name)
+            get_windows_full_registry(mount_path, computer_name)
             get_windows_browsing_history(mount_path, computer_name)
             get_windows_browsing_data(mount_path, computer_name)
             hayabusa_evtx(mount_path, computer_name)
