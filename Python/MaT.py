@@ -2,12 +2,15 @@
 
 
 #. Description: Script to mount and make a triage (MaT). The artifacts are exported into CSV files.
+
+
 #. Requirements : 
 #- hayabusa in the folder of the script
 #- regripper in the folder of the script
 #- python-regristry : https://github.com/williballenthin/python-registry
 #- and all libraries that are imported 
 #- tabulate pour regipy
+
 
 import platform
 import pandas as pd
@@ -62,8 +65,6 @@ from regipy.registry import RegistryHive
 # Chemin vers le système de fichiers monté
 script_name = sys.argv[0]
 
-def usage():
-    print("Exemple : python " + script_name + " /mnt/root")
 
 # Déclarer la variable globale pour le répertoire courant original
 original_cwd_fd = None
