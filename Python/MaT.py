@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 
-#. Description: Script to extract some artefacts from mounted filesystem to analyze into csv files for ELK indexation
+#. Description: Script to mount and make a triage (MaT). The artifacts are exported into CSV files.
 #. Requirements : 
 #- hayabusa in the folder of the script
 #- regripper in the folder of the script
@@ -233,6 +233,26 @@ def get_network_info(mount_path, computer_name):
                             gateway = line.split()[1]
                     if iface:
                         writer.writerow({'computer_name': computer_name, 'interface' : iface, 'ip_address': ip, 'netmask': netmask, 'gateway' : gateway})
+                ## if IP address is empty, we'll check into interfaces.d directory
+                if not ip:
+                    interfaces_d_dir = os.path.join(mount_path, "etc/network/interfaces.d")
+                    if os.path.isdir(interfaces_d_dir):
+                        for filename in os.listdir(interfaces_d_dir):
+                            filepath = os.path.join(interfaces_d_dir, filename)
+                            if os.path.isfile(filepath):
+                                with open(filepath) as subf:
+                                    for line in subf:
+                                        line = line.strip()
+                                        if line.startswith('iface'):
+                                            iface = line.split()[1]
+                                        if 'address' in line:
+                                            ip = line.split()[1]
+                                        if 'netmask' in line:
+                                            netmask = line.split()[1]
+                                        if 'gateway' in line:
+                                            gateway = line.split()[1]
+                                if iface and ip:
+                                    writer.writerow({'computer_name': computer_name, 'interface': iface, 'ip_address': ip, 'netmask': netmask, 'gateway': gateway})
 
         # Extraction des informations pour RedHat (ifcfg)
             elif os.path.exists(redhat_ifcfg_dir):
@@ -2422,6 +2442,26 @@ def get_files_of_interest(mount_path, computer_name, platform):
     ##Finally, launch crypto research
     crypto_search(computer_name, mount_path)
 
+def validate_litecoin_legacy(address):
+    try:
+        decoded = base58.b58decode(address)
+        if len(decoded) != 25:
+            return False
+
+        # Préfixes P2PKH Litecoin legacy : 0x30 (48 decimal), souvent représenté par 'L' ou 'M'
+        prefix = decoded[0]
+        if prefix != 0x30:
+            return False
+
+        data = decoded[:-4]
+        given_checksum = decoded[-4:]
+        recalculated_checksum = hashlib.sha256(hashlib.sha256(data).digest()).digest()[:4]
+
+        if given_checksum == recalculated_checksum:
+            return True
+
+    except Exception:
+        return False
 
 def validate_btc_address(address):
     try:
@@ -2450,6 +2490,26 @@ def validate_btc_address(address):
 
     except Exception as e:
         print(f"Error: {e}")
+        return False
+
+def validate_bitcoin_p2sh(address):
+    try:
+        decoded = base58.b58decode(address)
+        if len(decoded) != 25:
+            return False
+
+        prefix = decoded[0]
+        if prefix != 0x05:
+            return False
+
+        given_checksum = decoded[-4:]
+        data = decoded[:-4]
+        recalculated_checksum = hashlib.sha256(hashlib.sha256(data).digest()).digest()[:4]
+
+        if given_checksum == recalculated_checksum:
+            return True
+
+    except Exception:
         return False
 
 def validate_bech32_address(address):
@@ -2616,11 +2676,17 @@ def crypto_search(computer_name, mount_path):
             print(f"Verifying crypto address...")
             df_unique['verified'] = 'unknown'
             for index, row in df_unique.iterrows():
+                if row['type'] == 'litecoin_legacy':
+                    is_valid = validate_litecoin_legacy(row['match'])
+                    df_unique.at[index, 'verified'] = 'true' if is_valid else 'false'
                 if row['type'] == 'bitcoin_legacy':
                     is_valid = validate_btc_address(row['match'])
                     df_unique.at[index, 'verified'] = 'true' if is_valid else 'false'
                 if row['type'] == 'bitcoin_bech32':
                     is_valid = validate_bech32_address(row['match'])
+                    df_unique.at[index, 'verified'] = 'true' if is_valid else 'false'
+                if row['type'] == 'bitcoin_p2sh':
+                    is_valid = validate_bitcoin_p2sh(row['match'])
                     df_unique.at[index, 'verified'] = 'true' if is_valid else 'false'
                 if row['type'] == 'ethereum_address':
                     is_valid = validate_ethereum_address(row['match'])
@@ -2677,102 +2743,104 @@ def get_mft(computer_name, image_path, byte_offset):
         print(red(f"[-] Error extracting or parsing MFT: {e}"))
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-f", "--image", required=True, help="Path to disk image (.raw, .qcow2, .E01)")
+parser.add_argument("-f", "--image", required=False, help="Path to disk image (.raw, .qcow2, .E01)")
 parser.add_argument("-d", "--mount", required=True, help="Mount directory")
 args = parser.parse_args()
 
 image_path = args.image
 mount_path = args.mount
 
-if not os.path.isfile(image_path):
-    print(red(f"[-] Image file does not exist: {image_path}"))
-    sys.exit(1)
+
+if image_path:
+    if not os.path.isfile(image_path):
+        print(red(f"[-] Image file does not exist: {image_path}"))
+        sys.exit(1)
+    # Détection du format
+    ext = image_path.lower().split('.')[-1]
+    is_e01 = ext == "e01"
+    is_qcow = ext == "qcow2"
+    
+    # Initialisation du chemin réel vers l'image à utiliser
+    real_image = image_path
+    
+    # Si E01, utiliser ewfmount
+    if is_e01:
+        ewf_mountpoint = "/mnt/ewf"
+        os.makedirs(ewf_mountpoint, exist_ok=True)
+        print(yellow("[+] Detected E01 image, mounting with ewfmount..."))
+        try:
+            subprocess.run(["ewfmount", image_path, ewf_mountpoint], check=True)
+            real_image = os.path.join(ewf_mountpoint, "ewf1")
+        except Exception as e:
+            print(red(f"[-] Failed to mount E01 image: {e}"))
+            sys.exit(1)
+    
+    # Si qcow2, utiliser qemu-nbd
+    if is_qcow:
+        print("[+] Detected QCOW2 image, attaching with qemu-nbd...")
+        try:
+            subprocess.run(["modprobe", "nbd"], check=True)
+            subprocess.run(["qemu-nbd", "--connect=/dev/nbd0", image_path], check=True)
+            real_image = "/dev/nbd0"
+            time.sleep(2)  # Laisse le temps à /dev/nbd0pX de se créer
+        except Exception as e:
+            print(red(f"[-] Failed to attach QCOW2 image: {e}"))
+            sys.exit(1)
+    
+    # Lister les partitions
+    try:
+        output = subprocess.check_output(["fdisk", "-l", real_image], text=True)
+    except Exception as e:
+        print(red(f"[-] Failed to run fdisk: {e}"))
+        sys.exit(1)
+    
+    lines = output.strip().splitlines()
+    partitions = []
+    found = False
+    
+    for line in lines:
+        if line.startswith("Device"):
+            found = True
+            continue
+        if found and line.strip():
+            partitions.append(line)
+    
+    if not partitions:
+        print(red("[-] No valid partitions found."))
+        sys.exit(1)
+    
+    print(yellow("\n[+] Partitions found:"))
+    for i, part in enumerate(partitions, 1):
+        print(f"{i}: {part}")
+    
+    try:
+        part_num = int(input("\n[?] Enter the number of the partition to mount: "))
+        if part_num < 1 or part_num > len(partitions):
+            raise ValueError
+    except:
+        print(red("[-] Invalid input"))
+        sys.exit(1)
+    
+    chosen_line = partitions[part_num - 1].split()
+    if "*" in chosen_line:
+        offset_sector = int(chosen_line[2])
+    else:
+        offset_sector = int(chosen_line[1])
+    byte_offset = offset_sector * 512
+    
+    # Montage
+    try:
+        subprocess.run(["mount", "-o", f"ro,norecovery,offset={byte_offset}", real_image, mount_path], check=True)
+        #subprocess.run(["mount", "-o", f"ro,loop,offset={byte_offset}", real_image, mount_path], check=True)
+        print(green(f"[+] Mounted partition {part_num} at {mount_path} (offset {byte_offset})"))
+    except Exception as e:
+        print(red(f"[-] Failed to mount: {e}"))
+        sys.exit(1)
+
 
 if not os.path.exists(mount_path):
     os.makedirs(mount_path)
     print(green(f"[+] Created mount point: {mount_path}"))
-
-# Détection du format
-ext = image_path.lower().split('.')[-1]
-is_e01 = ext == "e01"
-is_qcow = ext == "qcow2"
-
-# Initialisation du chemin réel vers l'image à utiliser
-real_image = image_path
-
-# Si E01, utiliser ewfmount
-if is_e01:
-    ewf_mountpoint = "/mnt/ewf"
-    os.makedirs(ewf_mountpoint, exist_ok=True)
-    print(yellow("[+] Detected E01 image, mounting with ewfmount..."))
-    try:
-        subprocess.run(["ewfmount", image_path, ewf_mountpoint], check=True)
-        real_image = os.path.join(ewf_mountpoint, "ewf1")
-    except Exception as e:
-        print(red(f"[-] Failed to mount E01 image: {e}"))
-        sys.exit(1)
-
-# Si qcow2, utiliser qemu-nbd
-if is_qcow:
-    print("[+] Detected QCOW2 image, attaching with qemu-nbd...")
-    try:
-        subprocess.run(["modprobe", "nbd"], check=True)
-        subprocess.run(["qemu-nbd", "--connect=/dev/nbd0", image_path], check=True)
-        real_image = "/dev/nbd0"
-        time.sleep(2)  # Laisse le temps à /dev/nbd0pX de se créer
-    except Exception as e:
-        print(red(f"[-] Failed to attach QCOW2 image: {e}"))
-        sys.exit(1)
-
-# Lister les partitions
-try:
-    output = subprocess.check_output(["fdisk", "-l", real_image], text=True)
-except Exception as e:
-    print(red(f"[-] Failed to run fdisk: {e}"))
-    sys.exit(1)
-
-lines = output.strip().splitlines()
-partitions = []
-found = False
-
-for line in lines:
-    if line.startswith("Device"):
-        found = True
-        continue
-    if found and line.strip():
-        partitions.append(line)
-
-if not partitions:
-    print(red("[-] No valid partitions found."))
-    sys.exit(1)
-
-print(yellow("\n[+] Partitions found:"))
-for i, part in enumerate(partitions, 1):
-    print(f"{i}: {part}")
-
-try:
-    part_num = int(input("\n[?] Enter the number of the partition to mount: "))
-    if part_num < 1 or part_num > len(partitions):
-        raise ValueError
-except:
-    print(red("[-] Invalid input"))
-    sys.exit(1)
-
-chosen_line = partitions[part_num - 1].split()
-if "*" in chosen_line:
-    offset_sector = int(chosen_line[2])
-else:
-    offset_sector = int(chosen_line[1])
-byte_offset = offset_sector * 512
-
-# Montage
-try:
-    subprocess.run(["mount", "-o", f"ro,norecovery,offset={byte_offset}", real_image, mount_path], check=True)
-    #subprocess.run(["mount", "-o", f"ro,loop,offset={byte_offset}", real_image, mount_path], check=True)
-    print(green(f"[+] Mounted partition {part_num} at {mount_path} (offset {byte_offset})"))
-except Exception as e:
-    print(red(f"[-] Failed to mount: {e}"))
-    sys.exit(1)
 
 
 if len(sys.argv) > 1:
