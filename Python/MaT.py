@@ -2326,13 +2326,13 @@ def find_files_chunk(mount_path, file_pattern):
     result = subprocess.run(find_cmd, shell=True, capture_output=True, text=True)
     return result.stdout.splitlines()
 
-def get_files_of_interest(mount_path, computer_name):
+def get_files_of_interest(mount_path, computer_name, platform):
     run_find_crypto = input("Do you want to launch some files of interest & crypto stuff research? It will be quite long? (yes/no): ").strip().lower()
     if run_find_crypto != "yes":
         return
     if platform == "Linux":
         output_file = f"{script_path}/{result_folder}/linux_files_of_interest.csv"
-    elseif platform == "Windows":
+    elif platform == "Windows":
         output_file = f"{script_path}/{result_folder}/windows_files_of_interest.csv"
 
     files_to_search = ['wallet.*', '*.wallet', "*.kdbx", '*.tox']
@@ -2746,7 +2746,7 @@ if not partitions:
     print(red("[-] No valid partitions found."))
     sys.exit(1)
 
-print("\n[+] Partitions found:")
+print(yellow("\n[+] Partitions found:"))
 for i, part in enumerate(partitions, 1):
     print(f"{i}: {part}")
 
@@ -2767,7 +2767,8 @@ byte_offset = offset_sector * 512
 
 # Montage
 try:
-    subprocess.run(["mount", "-o", f"ro,loop,offset={byte_offset}", real_image, mount_path], check=True)
+    subprocess.run(["mount", "-o", f"ro,norecovery,offset={byte_offset}", real_image, mount_path], check=True)
+    #subprocess.run(["mount", "-o", f"ro,loop,offset={byte_offset}", real_image, mount_path], check=True)
     print(green(f"[+] Mounted partition {part_num} at {mount_path} (offset {byte_offset})"))
 except Exception as e:
     print(red(f"[-] Failed to mount: {e}"))
@@ -2805,7 +2806,7 @@ if len(sys.argv) > 1:
             get_linux_browsing_data(mount_path, computer_name)
             get_linux_crontab(mount_path, computer_name)
             #create_volatility_profile(mount_path)
-            get_files_of_interest(mount_path, computer_name)
+            get_files_of_interest(mount_path, computer_name, platform)
         elif platform == "Windows":
             computer_name = get_windows_machine_name(mount_path)
             get_mft(computer_name, image_path, byte_offset)
