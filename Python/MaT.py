@@ -2330,8 +2330,11 @@ def get_files_of_interest(mount_path, computer_name):
     run_find_crypto = input("Do you want to launch some files of interest & crypto stuff research? It will be quite long? (yes/no): ").strip().lower()
     if run_find_crypto != "yes":
         return
+    if platform == "Linux":
+        output_file = f"{script_path}/{result_folder}/linux_files_of_interest.csv"
+    elseif platform == "Windows":
+        output_file = f"{script_path}/{result_folder}/windows_files_of_interest.csv"
 
-    output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
     files_to_search = ['wallet.*', '*.wallet', "*.kdbx", '*.tox']
     file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.mdb", "*.psql", "*.pgsql", "*.frm",
                             "*.tbl", "*.mdf", "*.ndf", "*.ldf", "*.bson", "*.json", "*.dat", "*.db", "*.sqlite",
@@ -2662,15 +2665,19 @@ def get_mft(computer_name, image_path, byte_offset):
         print(green(f"[+] MFT raw extracted to {mft_raw_path}"))
 
         # Analyse avec analyzeMFT.py
-        os.system(f"analyzeMFT.py -f {mft_raw_path} -o {mft_csv_path}")
-        print(green(f"[+] MFT parsed to {mft_csv_path}"))
+        os.system(f"analyzeMFT.py -f {mft_raw_path} -o {mft_csv_path} -p")
+        if os.path.exists(mft_csv_path):
+            df = pd.read_csv(mft_csv_path)
+            df['computer_name'] = computer_name
+            df.to_csv(mft_csv_path, index=False)
+            print(green(f"[+] MFT parsed to {mft_csv_path}"))
+            os.remove(mft_raw_path)
 
     except Exception as e:
         print(red(f"[-] Error extracting or parsing MFT: {e}"))
 
-
 parser = argparse.ArgumentParser()
-parser.add_argument("-f", "--image", required=True, help="Path to raw disk image")
+parser.add_argument("-f", "--image", required=True, help="Path to disk image (.raw, .qcow2, .E01)")
 parser.add_argument("-d", "--mount", required=True, help="Mount directory")
 args = parser.parse_args()
 
@@ -2678,15 +2685,48 @@ image_path = args.image
 mount_path = args.mount
 
 if not os.path.isfile(image_path):
-    print(f"[-] Image file does not exist: {image_path}")
+    print(red(f"[-] Image file does not exist: {image_path}"))
     sys.exit(1)
 
 if not os.path.exists(mount_path):
     os.makedirs(mount_path)
-    rint(green(f"[+] Created mount point: {mount_path}"))
+    print(green(f"[+] Created mount point: {mount_path}"))
 
+# Détection du format
+ext = image_path.lower().split('.')[-1]
+is_e01 = ext == "e01"
+is_qcow = ext == "qcow2"
+
+# Initialisation du chemin réel vers l'image à utiliser
+real_image = image_path
+
+# Si E01, utiliser ewfmount
+if is_e01:
+    ewf_mountpoint = "/mnt/ewf"
+    os.makedirs(ewf_mountpoint, exist_ok=True)
+    print(yellow("[+] Detected E01 image, mounting with ewfmount..."))
+    try:
+        subprocess.run(["ewfmount", image_path, ewf_mountpoint], check=True)
+        real_image = os.path.join(ewf_mountpoint, "ewf1")
+    except Exception as e:
+        print(red(f"[-] Failed to mount E01 image: {e}"))
+        sys.exit(1)
+
+# Si qcow2, utiliser qemu-nbd
+if is_qcow:
+    print("[+] Detected QCOW2 image, attaching with qemu-nbd...")
+    try:
+        subprocess.run(["modprobe", "nbd"], check=True)
+        subprocess.run(["qemu-nbd", "--connect=/dev/nbd0", image_path], check=True)
+        real_image = "/dev/nbd0"
+        time.sleep(2)  # Laisse le temps à /dev/nbd0pX de se créer
+    except Exception as e:
+        print(red(f"[-] Failed to attach QCOW2 image: {e}"))
+        sys.exit(1)
+
+# Lister les partitions
 try:
-    output = subprocess.check_output(["fdisk", "-l", image_path], text=True)
+    output = subprocess.check_output(["fdisk", "-l", real_image], text=True)
 except Exception as e:
     print(red(f"[-] Failed to run fdisk: {e}"))
     sys.exit(1)
@@ -2703,7 +2743,7 @@ for line in lines:
         partitions.append(line)
 
 if not partitions:
-    print(yellow("[-] No valid partitions found."))
+    print(red("[-] No valid partitions found."))
     sys.exit(1)
 
 print("\n[+] Partitions found:")
@@ -2715,7 +2755,7 @@ try:
     if part_num < 1 or part_num > len(partitions):
         raise ValueError
 except:
-    print("[-] Invalid input")
+    print(red("[-] Invalid input"))
     sys.exit(1)
 
 chosen_line = partitions[part_num - 1].split()
@@ -2725,12 +2765,13 @@ else:
     offset_sector = int(chosen_line[1])
 byte_offset = offset_sector * 512
 
+# Montage
 try:
-    ## Montage du filesystem pour analyse
-    subprocess.run(["mount", "-o", f"ro,loop,offset={byte_offset}", image_path, mount_path], check=True)
+    subprocess.run(["mount", "-o", f"ro,loop,offset={byte_offset}", real_image, mount_path], check=True)
     print(green(f"[+] Mounted partition {part_num} at {mount_path} (offset {byte_offset})"))
 except Exception as e:
     print(red(f"[-] Failed to mount: {e}"))
+    sys.exit(1)
 
 
 if len(sys.argv) > 1:
