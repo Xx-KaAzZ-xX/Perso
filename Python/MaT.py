@@ -2355,6 +2355,9 @@ def get_files_of_interest(mount_path, computer_name, platform):
         output_file = f"{script_path}/{result_folder}/linux_files_of_interest.csv"
     elif platform == "Windows":
         output_file = f"{script_path}/{result_folder}/windows_files_of_interest.csv"
+    elif platform == "Unknown":
+        output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
+
 
     files_to_search = ['wallet.*', '*.wallet', "*.kdbx", '*.tox']
     file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.mdb", "*.psql", "*.pgsql", "*.frm",
@@ -2878,7 +2881,8 @@ if len(sys.argv) > 1:
             get_files_of_interest(mount_path, computer_name, platform)
         elif platform == "Windows":
             computer_name = get_windows_machine_name(mount_path)
-            get_mft(computer_name, image_path, byte_offset)
+            if image_path:
+                get_mft(computer_name, image_path, byte_offset)
             get_windows_info(mount_path, computer_name)
             get_windows_network_info(mount_path, computer_name)
             get_windows_users(mount_path, computer_name)
@@ -2893,14 +2897,14 @@ if len(sys.argv) > 1:
             get_windows_browsing_history(mount_path, computer_name)
             get_windows_browsing_data(mount_path, computer_name)
             hayabusa_evtx(mount_path, computer_name)
-            get_files_of_interest(mount_path, computer_name)
+            get_files_of_interest(mount_path, computer_name, platform)
             #extract_windows_evtx
         else:
             print("Unknown OS")
             run_search = input("The mouting point isn't a filesystem, but do you can launch some files of interest research? It will be quite long? (yes/no): ").strip().lower()
             if run_search == "yes":
                 computer_name = "Unknown"
-                get_files_of_interest(mount_path, computer_name)
+                get_files_of_interest(mount_path, computer_name, platform="Unknown")
             else:
                 print("Script is going to exit.")
                 sys.exit(0)
