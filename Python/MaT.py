@@ -20,6 +20,7 @@ import os
 import requests
 import logging
 import ipaddress
+import pytsk3
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -129,12 +130,12 @@ def get_system_info(mount_path):
         # Extraction des DNS
         resolv_file = os.path.join(mount_path, "etc/resolv.conf")
         ntp_file = os.path.join(mount_path, "etc/ntp.conf")
-        dns_servers = []
+        dns_server = []
         if os.path.exists(resolv_file):
             with open(resolv_file) as f:
                 for line in f:
                     if line.startswith('nameserver'):
-                        dns_servers.append(line.split()[1])
+                        dns_server.append(line.split()[1])
         else:
             dns_server= "Unknown"
 
@@ -2671,7 +2672,7 @@ def crypto_search(computer_name, mount_path):
         while not csv_queue.empty():
             writer.writerow(csv_queue.get())
 
-    print("[+] Cleaning {output_file}...")
+    print(f"[+] Cleaning {output_file}...")
     try:
         df = pd.read_csv(output_file)
         df_unique = df.drop_duplicates()
@@ -2723,6 +2724,60 @@ def determine_platform(mount_path):
         return "Windows"
     else:
         return "Unknown"
+def get_inode_table(computer_name, sub_part):
+    print(yellow(f"[+] Extracting Inode Table from {sub_part}..."))
+    img = pytsk3.Img_Info(sub_part)
+    fs = pytsk3.FS_Info(img)
+    output_csv = os.path.join(script_path, result_folder, "linux_inode_table.csv")
+    inode_list = []
+    inode_lock = threading.Lock()
+    csv_lock = threading.Lock()
+    threads = 8
+    counter = 0
+    
+    # Récupération des inodes
+    try:
+        fls_output = subprocess.check_output(["fls", "-r", "-p", "-o", "0", sub_part], stderr=subprocess.DEVNULL).decode("utf-8", errors="ignore")
+    except Exception as e:
+        print(f"[-] Failed to run fls: {e}")
+        exit(1)
+    
+    for line in fls_output.strip().splitlines():
+        match = re.search(r'([0-9]+):\s+(.*)$', line)
+        if match:
+            inode = match.group(1)
+            source_path = match.group(2)
+            inode_list.append((inode, source_path))
+    
+    # Init CSV
+    with open(output_csv, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["inode", "deleted", "source_path", "ctime", "mtime", "atime"])
+        for inode, source_path in inode_list:
+            try:
+                entry = fs.open_meta(inode=int(inode))
+                deleted = not bool(entry.info.meta.flags & pytsk3.TSK_FS_META_FLAG_ALLOC)
+                ctime = entry.info.meta.crtime
+                mtime = entry.info.meta.mtime
+                atime = entry.info.meta.atime
+                writer.writerow([inode, deleted, source_path, ctime, mtime, atime])
+            except Exception as e:
+                counter += 1
+                ## counter to count entries that has a problem for debug
+                continue
+        #print(counter)
+    df = pd.read_csv(output_csv)
+    
+    for col in ['ctime', 'mtime', 'atime']:
+        df[col] = pd.to_datetime(df[col], unit='s', errors='coerce')
+    df['computer_name'] = computer_name
+    df.to_csv(output_csv, index=False)   
+    print(green(f"[+] Inode table has been written into : {output_csv}"))
+
+
+
+
+
 
 def get_mft(computer_name, image_path, byte_offset):
     print(yellow("[+] Extracting Master File Table (MFT)..."))
@@ -2784,13 +2839,31 @@ if image_path:
         print("[+] Detected QCOW2 image, attaching with qemu-nbd...")
         try:
             subprocess.run(["modprobe", "nbd"], check=True)
-            subprocess.run(["qemu-nbd", "--connect=/dev/nbd0", image_path], check=True)
-            real_image = "/dev/nbd0"
-            time.sleep(2)  # Laisse le temps à /dev/nbd0pX de se créer
+    
+            # Trouver le premier /dev/nbdX non utilisé
+            nbd_device = None
+            for i in range(8):
+                candidate = f"/dev/nbd{i}"
+                try:
+                    result = subprocess.run(["lsblk", "-no", "MOUNTPOINT", candidate], capture_output=True, text=True)
+                    if not result.stdout.strip():  # Non monté
+                        nbd_device = candidate
+                        break
+                except:
+                    continue
+    
+            if not nbd_device:
+                print(red("[-] No free /dev/nbdX device found"))
+                sys.exit(1)
+    
+            subprocess.run(["qemu-nbd", "--connect", nbd_device, image_path], check=True)
+            real_image = nbd_device
+            time.sleep(2)  # Attente création partitions
+    
         except Exception as e:
             print(red(f"[-] Failed to attach QCOW2 image: {e}"))
             sys.exit(1)
-    
+
     # Lister les partitions
     try:
         output = subprocess.check_output(["fdisk", "-l", real_image], text=True)
@@ -2828,10 +2901,15 @@ if image_path:
     chosen_line = partitions[part_num - 1].split()
     if "*" in chosen_line:
         offset_sector = int(chosen_line[2])
+        sub_part = chosen_line[1]
     else:
         offset_sector = int(chosen_line[1])
+        sub_part = chosen_line[0]
+        #print(sub_part)
     byte_offset = offset_sector * 512
-    
+        
+    if not os.path.exists(mount_path):
+        os.makedirs(mount_path)
     # Montage
     try:
         subprocess.run(["mount", "-o", f"ro,norecovery,offset={byte_offset}", real_image, mount_path], check=True)
@@ -2866,6 +2944,8 @@ if len(sys.argv) > 1:
                 print(f"Error creating folder {result_folder}: {e}")
         if platform == "Linux":
             computer_name = get_system_info(mount_path)
+            if image_path:
+                get_inode_table(computer_name, sub_part)
             get_network_info(mount_path, computer_name)
             get_users_and_groups(mount_path, computer_name)
             list_installed_apps(mount_path, computer_name)
