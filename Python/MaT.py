@@ -2724,10 +2724,15 @@ def determine_platform(mount_path):
         return "Windows"
     else:
         return "Unknown"
-def get_inode_table(computer_name, sub_part):
-    print(yellow(f"[+] Extracting Inode Table from {sub_part}..."))
-    img = pytsk3.Img_Info(sub_part)
-    fs = pytsk3.FS_Info(img)
+def get_inode_table(computer_name, real_image, byte_offset):
+    print(byte_offset)
+    #print(yellow(f"[+] Extracting Inode Table from {sub_part}..."))
+    print(yellow(f"[+] Extracting Inode Table from {real_image}..."))
+    #img = pytsk3.Img_Info(sub_part)
+    #fs = pytsk3.FS_Info(img)
+    img = pytsk3.Img_Info(real_image)  # image_path = full image (qcow2, raw, ewf1)
+    fs = pytsk3.FS_Info(img, offset=byte_offset)  # offset calculé depuis la partition choisie
+
     output_csv = os.path.join(script_path, result_folder, "linux_inode_table.csv")
     inode_list = []
     inode_lock = threading.Lock()
@@ -2746,6 +2751,7 @@ def get_inode_table(computer_name, sub_part):
         match = re.search(r'([0-9]+):\s+(.*)$', line)
         if match:
             inode = match.group(1)
+            #print(inode)
             source_path = match.group(2)
             inode_list.append((inode, source_path))
     
@@ -2809,111 +2815,108 @@ args = parser.parse_args()
 image_path = args.image
 mount_path = args.mount
 
-
 if image_path:
     if not os.path.isfile(image_path):
         print(red(f"[-] Image file does not exist: {image_path}"))
         sys.exit(1)
+
     # Détection du format
     ext = image_path.lower().split('.')[-1]
+    is_raw = ext == "img"
     is_e01 = ext == "e01"
     is_qcow = ext == "qcow2"
-    
-    # Initialisation du chemin réel vers l'image à utiliser
     real_image = image_path
-    
-    # Si E01, utiliser ewfmount
+
+    # --- E01 ---
     if is_e01:
-        ewf_mountpoint = "/mnt/ewf"
-        os.makedirs(ewf_mountpoint, exist_ok=True)
-        print(yellow("[+] Detected E01 image, mounting with ewfmount..."))
+        print("[+] Detected E01 image, mounting with ewfmount...")
         try:
+            for i in range(10):
+                ewf_mountpoint = "/mnt/ewf" if i == 0 else f"/mnt_ewf_{i}"
+                if not os.path.ismount(ewf_mountpoint):
+                    os.makedirs(ewf_mountpoint, exist_ok=True)
+                    break
+            else:
+                print(red("[-] No free ewf mount point found"))
+                sys.exit(1)
+
             subprocess.run(["ewfmount", image_path, ewf_mountpoint], check=True)
             real_image = os.path.join(ewf_mountpoint, "ewf1")
         except Exception as e:
             print(red(f"[-] Failed to mount E01 image: {e}"))
             sys.exit(1)
-    
-    # Si qcow2, utiliser qemu-nbd
-    if is_qcow:
+
+    # --- QCOW2 ---
+    elif is_qcow:
         print("[+] Detected QCOW2 image, attaching with qemu-nbd...")
         try:
             subprocess.run(["modprobe", "nbd"], check=True)
-    
-            # Trouver le premier /dev/nbdX non utilisé
             nbd_device = None
-            for i in range(8):
+            for i in range(16):
                 candidate = f"/dev/nbd{i}"
-                try:
-                    result = subprocess.run(["lsblk", "-no", "MOUNTPOINT", candidate], capture_output=True, text=True)
-                    if not result.stdout.strip():  # Non monté
-                        nbd_device = candidate
-                        break
-                except:
-                    continue
-    
+                result = subprocess.run(["fdisk", "-l", candidate],
+                                        capture_output=True, text=True)
+                if result.returncode != 0:
+                    nbd_device = candidate
+                    break
             if not nbd_device:
                 print(red("[-] No free /dev/nbdX device found"))
                 sys.exit(1)
-    
+
             subprocess.run(["qemu-nbd", "--connect", nbd_device, image_path], check=True)
             real_image = nbd_device
-            time.sleep(2)  # Attente création partitions
-    
+            time.sleep(2)
         except Exception as e:
             print(red(f"[-] Failed to attach QCOW2 image: {e}"))
             sys.exit(1)
 
-    # Lister les partitions
+    # --- Partitions ---
     try:
         output = subprocess.check_output(["fdisk", "-l", real_image], text=True)
     except Exception as e:
         print(red(f"[-] Failed to run fdisk: {e}"))
         sys.exit(1)
-    
+
     lines = output.strip().splitlines()
     partitions = []
     found = False
-    
     for line in lines:
         if line.startswith("Device"):
             found = True
             continue
         if found and line.strip():
             partitions.append(line)
-    
+
     if not partitions:
         print(red("[-] No valid partitions found."))
         sys.exit(1)
-    
+
     print(yellow("\n[+] Partitions found:"))
     for i, part in enumerate(partitions, 1):
         print(f"{i}: {part}")
-    
+
     try:
         part_num = int(input("\n[?] Enter the number of the partition to mount: "))
-        if part_num < 1 or part_num > len(partitions):
+        if not (1 <= part_num <= len(partitions)):
             raise ValueError
     except:
         print(red("[-] Invalid input"))
         sys.exit(1)
-    
+
     chosen_line = partitions[part_num - 1].split()
     if "*" in chosen_line:
         offset_sector = int(chosen_line[2])
-        sub_part = chosen_line[1]
     else:
         offset_sector = int(chosen_line[1])
-        sub_part = chosen_line[0]
-        #print(sub_part)
     byte_offset = offset_sector * 512
-        
+    sub_part = chosen_line[0]
+
+    # --- Montage ---
     if not os.path.exists(mount_path):
         os.makedirs(mount_path)
-    # Montage
+
     try:
         subprocess.run(["mount", "-o", f"ro,norecovery,offset={byte_offset}", real_image, mount_path], check=True)
-        #subprocess.run(["mount", "-o", f"ro,loop,offset={byte_offset}", real_image, mount_path], check=True)
         print(green(f"[+] Mounted partition {part_num} at {mount_path} (offset {byte_offset})"))
     except Exception as e:
         print(red(f"[-] Failed to mount: {e}"))
@@ -2945,7 +2948,8 @@ if len(sys.argv) > 1:
         if platform == "Linux":
             computer_name = get_system_info(mount_path)
             if image_path:
-                get_inode_table(computer_name, sub_part)
+                get_inode_table(computer_name, real_image, byte_offset)
+                #get_inode_table(computer_name, sub_part)
             get_network_info(mount_path, computer_name)
             get_users_and_groups(mount_path, computer_name)
             list_installed_apps(mount_path, computer_name)
