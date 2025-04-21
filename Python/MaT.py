@@ -160,6 +160,22 @@ def get_system_info(mount_path):
             last_log_infos = os.stat(last_event_log)
             timestamp = last_log_infos.st_mtime
             last_event = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
+        else:
+             #find the oldest write on /var/log
+            last_event = 0
+            latest_file = ""
+            log_dir = os.path.join(mount_path, "var/log/")
+            for root, dirs, files in os.walk(log_dir):
+                for file in files:
+                    path = os.path.join(root, file)
+                    try:
+                        mtime = os.path.getmtime(path)
+                        if mtime > last_event:
+                            last_event = mtime
+                            latest_file = path
+                    except:
+                        continue
+            last_event = (f"{datetime.fromtimestamp(last_event)}")
 
         # Get last update based on distro
         if distro in ["debian", "ubuntu", "kali"]:
@@ -978,7 +994,7 @@ def get_linux_crontab(mount_path, computer_name):
                     for line in file:
                         if line.strip() and not line.startswith("#"):
                             parsed_schedule = parse_crontab_line(line)
-                            print(f"foobar {schedule}")
+                            #print(f"foobar {schedule}")
                             if parsed_schedule:
                                 schedule, task, user_crontab = parsed_schedule
                                 tasks.append({
@@ -2724,41 +2740,50 @@ def determine_platform(mount_path):
         return "Windows"
     else:
         return "Unknown"
-def get_inode_table(computer_name, real_image, byte_offset):
-    print(byte_offset)
-    #print(yellow(f"[+] Extracting Inode Table from {sub_part}..."))
-    print(yellow(f"[+] Extracting Inode Table from {real_image}..."))
-    #img = pytsk3.Img_Info(sub_part)
-    #fs = pytsk3.FS_Info(img)
-    img = pytsk3.Img_Info(real_image)  # image_path = full image (qcow2, raw, ewf1)
-    fs = pytsk3.FS_Info(img, offset=byte_offset)  # offset calculé depuis la partition choisie
+
+def get_inode_table(computer_name, real_image, sub_part, byte_offset, image_format):
+    print(yellow(f"[+] Extracting Inode Table from {real_image} (offset {byte_offset})..."))
+
+    # Init SleuthKit
+    try:
+        img = pytsk3.Img_Info(real_image)
+        fs = pytsk3.FS_Info(img, offset=byte_offset)
+    except Exception as e:
+        print(red(f"[-] pytsk3 FS_Info failed: {e}"))
+        return
 
     output_csv = os.path.join(script_path, result_folder, "linux_inode_table.csv")
     inode_list = []
-    inode_lock = threading.Lock()
-    csv_lock = threading.Lock()
     threads = 8
-    counter = 0
-    
-    # Récupération des inodes
+
+    # Équivalent switch-case pour fls
+    if image_format == "qcow2":
+        fls_cmd = ["fls", "-r", "-p", "-o", "0", sub_part]
+    elif image_format == "raw" or image_format == "img":
+        fls_cmd = ["fls", "-r", "-p", "-o", str(byte_offset // 512), real_image]
+    elif image_format == "e01":
+        fls_cmd = ["fls", "-r", "-p", "-o", str(byte_offset // 512), real_image]
+    else:
+        print(red("[-] Unsupported image format for fls"))
+        return
+
     try:
-        fls_output = subprocess.check_output(["fls", "-r", "-p", "-o", "0", sub_part], stderr=subprocess.DEVNULL).decode("utf-8", errors="ignore")
+        fls_output = subprocess.check_output(fls_cmd, stderr=subprocess.DEVNULL).decode("utf-8", errors="ignore")
     except Exception as e:
-        print(f"[-] Failed to run fls: {e}")
-        exit(1)
-    
+        print(red(f"[-] Failed to run fls: {e}"))
+        return
+
     for line in fls_output.strip().splitlines():
         match = re.search(r'([0-9]+):\s+(.*)$', line)
         if match:
             inode = match.group(1)
-            #print(inode)
             source_path = match.group(2)
             inode_list.append((inode, source_path))
-    
-    # Init CSV
+
+    # Écriture CSV
     with open(output_csv, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["inode", "deleted", "source_path", "ctime", "mtime", "atime"])
+        writer.writerow(["computer_name", "inode", "deleted", "source_path", "ctime", "mtime", "atime"])
         for inode, source_path in inode_list:
             try:
                 entry = fs.open_meta(inode=int(inode))
@@ -2766,21 +2791,11 @@ def get_inode_table(computer_name, real_image, byte_offset):
                 ctime = entry.info.meta.crtime
                 mtime = entry.info.meta.mtime
                 atime = entry.info.meta.atime
-                writer.writerow([inode, deleted, source_path, ctime, mtime, atime])
-            except Exception as e:
-                counter += 1
-                ## counter to count entries that has a problem for debug
+                writer.writerow([computer_name, inode, deleted, source_path, ctime, mtime, atime])
+            except:
                 continue
-        #print(counter)
-    df = pd.read_csv(output_csv)
-    
-    for col in ['ctime', 'mtime', 'atime']:
-        df[col] = pd.to_datetime(df[col], unit='s', errors='coerce')
-    df['computer_name'] = computer_name
-    df.to_csv(output_csv, index=False)   
-    print(green(f"[+] Inode table has been written into : {output_csv}"))
 
-
+    print(green(f"[+] Inode Table written to {output_csv}"))
 
 
 
@@ -2808,7 +2823,7 @@ def get_mft(computer_name, image_path, byte_offset):
         print(red(f"[-] Error extracting or parsing MFT: {e}"))
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-f", "--image", required=False, help="Path to disk image (.raw, .qcow2, .E01)")
+parser.add_argument("-f", "--image", required=False, help="Path to disk image (.raw, .img, .qcow2, .E01)")
 parser.add_argument("-d", "--mount", required=True, help="Mount directory")
 args = parser.parse_args()
 
@@ -2822,14 +2837,18 @@ if image_path:
 
     # Détection du format
     ext = image_path.lower().split('.')[-1]
-    is_raw = ext == "img"
+    is_img = ext == "img"
+    is_raw = ext == "raw"
+    is_001 = ext == "001"
     is_e01 = ext == "e01"
     is_qcow = ext == "qcow2"
     real_image = image_path
 
+
     # --- E01 ---
     if is_e01:
         print("[+] Detected E01 image, mounting with ewfmount...")
+        image_format = "e01"
         try:
             for i in range(10):
                 ewf_mountpoint = "/mnt/ewf" if i == 0 else f"/mnt_ewf_{i}"
@@ -2849,6 +2868,7 @@ if image_path:
     # --- QCOW2 ---
     elif is_qcow:
         print("[+] Detected QCOW2 image, attaching with qemu-nbd...")
+        image_format = "qcow2"
         try:
             subprocess.run(["modprobe", "nbd"], check=True)
             nbd_device = None
@@ -2869,6 +2889,11 @@ if image_path:
         except Exception as e:
             print(red(f"[-] Failed to attach QCOW2 image: {e}"))
             sys.exit(1)
+    elif is_001 or is_raw or is_img:
+        print("[+] Detected RAW image")
+        image_format = "raw"
+
+
 
     # --- Partitions ---
     try:
@@ -2948,7 +2973,7 @@ if len(sys.argv) > 1:
         if platform == "Linux":
             computer_name = get_system_info(mount_path)
             if image_path:
-                get_inode_table(computer_name, real_image, byte_offset)
+                get_inode_table(computer_name, real_image, sub_part, byte_offset, image_format)
                 #get_inode_table(computer_name, sub_part)
             get_network_info(mount_path, computer_name)
             get_users_and_groups(mount_path, computer_name)
@@ -2957,7 +2982,7 @@ if len(sys.argv) > 1:
             list_services(mount_path, computer_name)
             get_command_history(mount_path, computer_name)
             get_firewall_rules(mount_path, computer_name)
-            #get_linux_used_space(mount_path, computer_name)
+            get_linux_used_space(mount_path, computer_name)
             get_linux_browsing_history(mount_path, computer_name)
             get_linux_browsing_data(mount_path, computer_name)
             get_linux_crontab(mount_path, computer_name)
