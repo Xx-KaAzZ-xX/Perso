@@ -2794,6 +2794,10 @@ def get_inode_table(computer_name, real_image, sub_part, byte_offset, image_form
                 writer.writerow([computer_name, inode, deleted, source_path, ctime, mtime, atime])
             except:
                 continue
+    df = pd.read_csv(output_csv)
+    for col in ["ctime", "mtime", "atime"]:
+        df[col] = pd.to_datetime(df[col], unit='s', errors='coerce')
+    df.to_csv(output_csv, index=False)
 
     print(green(f"[+] Inode Table written to {output_csv}"))
 
