@@ -1155,7 +1155,7 @@ def decode_product_key(digital_product_id):
 
 def get_windows_info(mount_path, computer_name):
     output_file = script_path + "/" + result_folder + "/" + "windows_system_info.csv"  # Assurez-vous que result_folder est défini si nécessaire
-    csv_columns = ['computer_name', 'windows_version', 'installation_date', 'ntp_server', 'last_update', 'last_event', 'keyboard_layout', 'license_key']
+    csv_columns = ['computer_name', 'windows_version', 'installation_date', 'ntp_server', 'last_update', 'last_event', 'keyboard_layout', 'license_key', 'proxy_server', 'proxy_enabled', 'timezone']
 
     # Initialisation des variables
     system_info = {
@@ -1166,7 +1166,10 @@ def get_windows_info(mount_path, computer_name):
         'last_update': '',
         'last_event': '',
         'keyboard_layout': '',
-        'license_key': ''
+        'license_key': '',
+        'proxy_server': '',
+        'proxy_enabled': '',
+        'timezone': ''
     }
     print(yellow(f"[+] Retrieving system information..."))
     # Récupération des informations NTP (dans le registre SYSTEM)
@@ -1174,11 +1177,33 @@ def get_windows_info(mount_path, computer_name):
     try:
         reg = Registry.Registry(path_to_reg_hive)
         ntp_key = reg.open("ControlSet001\\Services\\W32Time\\Parameters")
+        ## rajouter la timezone
         for value in ntp_key.values():
             if value.name() == "NtpServer":
                 system_info['ntp_server'] = value.value()
     except Exception as e:
         print(red(f"Erreur lors de la récupération des informations NTP: {e}"))
+    try:
+        reg = Registry.Registry(path_to_reg_hive)
+        possible_timezone_key_paths = [
+            "ControlSet001\\Control\\TimeZoneInformation",
+            "ROOT\\ControlSet001\\Control\\TimeZoneInformation",
+        ]
+    
+        for path in possible_timezone_key_paths:
+            try:
+                key = reg.open(path)
+                for value in key.values():
+                    if value.name() == "TimeZoneKeyName":
+                        system_info["timezone"] = value.value()
+            except Registry.RegistryKeyNotFoundException:
+                continue
+    
+    except Exception as e:
+        print(red(f"[-] Error retrieving timezone configuration: {e}"))
+
+
+
     try:
         path_to_ntdat = os.path.join(mount_path, 'Users/Default/NTUSER.DAT')
         reg = Registry.Registry(path_to_ntdat)
@@ -1228,6 +1253,35 @@ def get_windows_info(mount_path, computer_name):
     except Exception as e:
         print(red(f"[-]Error retrieving system installation information: {e}"))
 
+    # Récupération du serveur Proxy si paramétré (dans le registre SOFTWARE)
+    path_to_reg_hive = os.path.join(mount_path, 'Windows/System32/config/SOFTWARE')
+    try:
+        reg = Registry.Registry(os.path.join(mount_path, 'Windows/System32/config/SOFTWARE'))
+    
+        possible_proxy_key_paths = [
+            "Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+            "Policies\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+            "Microsoft\\Windows\\CurrentVersion\\Internet Settings\\Connections"
+        ]
+    
+        for path in possible_proxy_key_paths:
+            try:
+                key = reg.open(path)
+                for value in key.values():
+                    if value.name() == "ProxyServer":
+                        system_info["proxy_server"] = value.value()
+                        print(f"{proxy_server}")
+                    if value.name() == "ProxyEnable":
+                        system_info["proxy_enabled"] = value.value()
+            except Registry.RegistryKeyNotFoundException:
+                continue
+    
+    except Exception as e:
+        print(red(f"[-] Error retrieving proxy configuration: {e}"))
+
+
+
+
     # Récupération du dernier événement (last_event)
     try:
         last_event_log = os.path.join(mount_path, 'Windows/System32/winevt/Logs/System.evtx')
@@ -1238,13 +1292,25 @@ def get_windows_info(mount_path, computer_name):
     except Exception as e:
         print(red(f"Error retrieving last event: {e}"))
 
-        # Récupération de la dernière MAJ
+    # Récupération de la dernière MAJ
     try:
         reg = Registry.Registry(os.path.join(mount_path, 'Windows/System32/config/SOFTWARE'))
-        update_key = reg.open("Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\Results\\Install")
-        for value in update_key.values():
-            if value.name() == "LastSuccessTime":
-                system_info['last_update'] = value.value()
+
+        possible_update_key_paths = [
+            "Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\Results\\Install",
+            "Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\Results\\Detect",
+            "Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\Results\\Download",
+            "Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\Results\\Reboot Required"
+        ]
+
+        for path in possible_update_key_paths:
+            try:
+                key = reg.open(path)
+                for value in key.values():
+                    if value.name() == "LastSuccessTime":
+                        system_info["last_update"] = value.value()
+            except Registry.RegistryKeyNotFoundException:
+                continue  # skip missing keys silently
     except Exception as e:
         print(red(f"[-] Error retrieving last update information: {e}"))
 
@@ -2082,9 +2148,10 @@ def hayabusa_evtx(mount_path, computer_name):
         # Demander le nom du fichier de sortie
         if os.path.exists(hayabusa_path):
             output_file = script_path + "/" + result_folder + "/" + "hayabusa_output.csv"
+            json_output_file = script_path + "/" + result_folder + "/" + "hayabusa_output.jsonl"
             print("[+] Launching Hayabusa...")
-            command = f"{hayabusa_path} csv-timeline -C -d {mount_path}/Windows/System32/winevt/Logs/ -T -o {output_file}"
-            #command = f"{hayabusa_path} csv-timeline -C -N -A -a -w -d {mount_path}/Windows/System32/winevt/Logs/ -T -o {output_file}"
+            #command = f"{hayabusa_path} csv-timeline -C -d {mount_path}/Windows/System32/winevt/Logs/ -T -o {output_file}"
+            command = f"{hayabusa_path} json-timeline -C -N -a -w -d {mount_path}/Windows/System32/winevt/Logs/ -L -o {json_output_file}"
             os.system(command)
             df = pd.read_csv(output_file)
             df['Computer'] = computer_name
