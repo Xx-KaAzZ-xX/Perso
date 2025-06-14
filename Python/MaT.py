@@ -383,7 +383,7 @@ def list_connections(mount_path, computer_name):
     output_file = script_path + "/" + result_folder + "/" + "linux_connections.csv"
     print(yellow("[+] Retrieving connection information..."))
 
-    csv_columns = ['computer_name', 'connection_date', 'user', 'src_ip']
+    csv_columns = ['computer_name', 'connection_date', 'user', 'src_ip','source_file']
     # Ouvrir le fichier CSV pour écrire les informations
     with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
@@ -401,10 +401,12 @@ def list_connections(mount_path, computer_name):
         # Parcourir les fichiers de log pour récupérer les adresses IP
         for log_file in log_files:
             log_file_path = os.path.join(log_files_path, log_file)
+            source_file=""
 
             # Traitement des fichiers auth.log ou secure.log
             if "auth.log" in log_file or "secure" in log_file:
                 file_stat = os.stat(log_file_path)
+                source_file = "auth.log"
                 file_creation_year = time.localtime(file_stat.st_ctime).tm_year
                 with open(log_file_path, encoding='ISO-8859-1') as file:
                     log_content = file.read()
@@ -416,11 +418,12 @@ def list_connections(mount_path, computer_name):
                             user = parts[8]  # Utilisateur
                             src_ip = parts[10]  # IP source
                             counter += 1
-                            writer.writerow({'computer_name': computer_name, 'connection_date': connection_date_with_year, 'user': user, 'src_ip': src_ip})
+                            writer.writerow({'computer_name': computer_name, 'connection_date': connection_date_with_year, 'user': user, 'src_ip': src_ip, 'source_file': source_file})
                                        # Traitement des fichiers wtmp (via la commande last)
             if "wtmp" in log_file:
                 last_cmd = f"last -F -f {log_file_path}"
                 result_last = subprocess.run(last_cmd, shell=True, capture_output=True, text=True)
+                source_file = "wtmp"
 
                 for line in result_last.stdout.splitlines():
                     parts = line.split()
@@ -432,7 +435,7 @@ def list_connections(mount_path, computer_name):
                             continue
                         src_ip = parts[2]
                         counter += 1
-                        writer.writerow({'computer_name': computer_name, 'connection_date': connection_date, 'user': user, 'src_ip': src_ip})
+                        writer.writerow({'computer_name': computer_name, 'connection_date': connection_date, 'user': user, 'src_ip': src_ip, 'source_file': source_file})
             # Vérification de l'existence du dossier audit et recherche des fichiers audit.log
             audit_dir = os.path.join(log_files_path, "audit")
             if os.path.isdir(audit_dir):
@@ -440,6 +443,7 @@ def list_connections(mount_path, computer_name):
 
                 for audit_file in audit_files:
                     if "audit.log" in audit_file:
+                        source_file = "audit.log"
                         audit_file_path = os.path.join(audit_dir, audit_file)
                         zgrep_cmd = f"zgrep 'USER_LOGIN' {audit_file_path} | grep 'success'"
                         result_zgrep = subprocess.run(zgrep_cmd, shell=True, capture_output=True, text=True)
@@ -451,7 +455,32 @@ def list_connections(mount_path, computer_name):
                                 user = parts[-4]  # Utilisateur
                                 src_ip = parts[-1]  # IP source
                                 counter += 1
-                                writer.writerow({'computer_name': computer_name, 'connection_date': connection_date, 'user': user, 'src_ip': src_ip})
+                                writer.writerow({'computer_name': computer_name, 'connection_date': connection_date, 'user': user, 'src_ip': src_ip, 'source_file': source_file})
+            # Vérification de l'existence du dossier journalctl
+            journal_dir = os.path.join(log_files_path, "journal")
+            elif os.path.isdir(journal_dir):
+                source_file = "journal_dir"
+                grep_cmd = f"journalctl -D {journal_dir} | grep 'Accepted'"
+                result_grep = subprocess.run(grep_cmd, shell=True, capture_output=True, text=True)
+                for line in result_grep.stdout.splitlines():
+                    parts = line.split()
+                    if "Accepted" in parts:
+                        try:
+                            connection_date = parts[0] + " " + parts[1] + " " + parts[2]
+                            user_index = parts.index("for") + 1
+                            ip_index = parts.index("from") + 1
+                            user = parts[user_index]
+                            src_ip = parts[ip_index]
+
+                            writer.writerow({
+                                'computer_name': computer_name,
+                                'connection_date': connection_date,
+                                'user': user,
+                                'src_ip': src_ip,
+                                'source_file': source_file
+                            })
+                            counter += 1
+
     if counter >= 1:
         print(green(f"Connections informations have been written into {output_file}"))
     else:
@@ -667,68 +696,111 @@ def get_firewall_rules(mount_path, computer_name):
         with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
             writer.writeheader()
+            
+            # Détection du firewall actif
+            detect_cmd = "which iptables"
+            stdout, stderr = chroot_and_run_command(mount_path, detect_cmd)
+            firewall_type = "iptables" if stdout.strip() else ""
 
-            # Exécuter la commande iptables dans l'environnement chrooté
-            iptables_command = "iptables -L -n"
-            stdout, stderr = chroot_and_run_command(mount_path, iptables_command)
+            if not firewall_type:
+                detect_cmd = "which ufw"
+                stdout, stderr = chroot_and_run_command(mount_path, detect_cmd)
+                if stdout.strip():
+                    firewall_type = "ufw"
 
-            if stderr:
-                print(red(f"[-] Error running iptables command: {stderr}"))
+
+            if firewall_type == "iptables":
+                print(f"Iptables detected")
+                # Exécuter la commande iptables dans l'environnement chrooté
+                iptables_command = "iptables -L -n"
+                stdout, stderr = chroot_and_run_command(mount_path, iptables_command)
+
+                if stderr:
+                    print(red(f"[-] Error running iptables command: {stderr}"))
+                    return
+
+                rules = []
+                current_chain = ""
+                lines = stdout.splitlines()
+
+                # Regex pour extraire les ports tcp ou udp
+                port_regex = re.compile(r'(tcp|udp).*dpt:(\d+)')
+
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        continue  # Ignorer les lignes vides
+
+                    parts = line.split()
+
+                    # Si la ligne commence par "Chain", c'est une nouvelle chaîne
+                    if line.startswith("Chain"):
+                        current_chain = parts[1]  # On récupère le nom de la chaîne (INPUT, OUTPUT, etc.)
+                        continue
+                    if line.startswith("target"):
+                        continue
+
+                    # Si la ligne ne contient pas assez de colonnes, on l'ignore
+                    if len(parts) < 5:
+                        continue
+
+                    # Extraire les informations de la ligne
+                    target = parts[0]
+                    protocol = parts[1]
+                    opt = parts[2]
+                    source = parts[3]
+                    destination = parts[4]
+
+                    # Chercher un port si applicable
+                    port = ""
+                    port_match = port_regex.search(line)
+                    if port_match:
+                        protocol = port_match.group(1)
+                        port = port_match.group(2)
+
+                    # Ajouter la règle à la liste
+                    rules.append({
+                        'computer_name': computer_name,
+                        'chain': current_chain,
+                        'target': target,
+                        'prot': protocol,
+                        'source': source,
+                        'destination': destination,
+                        'port': port  # À adapter si nécessaire
+                    })
+                    counter += 1
+
+                # Écrire les règles dans le fichier CSV
+                writer.writerows(rules)
+            elif firewall_type == "ufw":
+                print(f"UFW Detected")
+                fw_cmd = "ufw status numbered"
+                stdout, stderr = chroot_and_run_command(mount_path, fw_cmd)
+                if stderr or "Status: inactive" in stdout:
+                    print(yellow("[!] UFW is inactive"))
+                    return
+
+                for line in stdout.splitlines():
+                    line = line.strip()
+                    if re.match(r"^\[\d+\]", line):
+                        # Exemple: [ 1] 22/tcp ALLOW IN Anywhere
+                        parts = line.split()
+                        port_proto = parts[1] if "/" in parts[1] else ""
+                        port, proto = port_proto.split("/") if "/" in port_proto else ("", "")
+                        writer.writerow({
+                            'computer_name': computer_name,
+                            'chain': "ufw",
+                            'target': parts[2],
+                            'prot': proto,
+                            'source': parts[4] if len(parts) > 4 else "",
+                            'destination': "",
+                            'port': port
+                        })
+                        counter += 1
+
+            else:
+                print(red("[-] No known firewall system (iptables/ufw) detected."))
                 return
-
-            rules = []
-            current_chain = ""
-            lines = stdout.splitlines()
-
-            # Regex pour extraire les ports tcp ou udp
-            port_regex = re.compile(r'(tcp|udp).*dpt:(\d+)')
-
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue  # Ignorer les lignes vides
-
-                parts = line.split()
-
-                # Si la ligne commence par "Chain", c'est une nouvelle chaîne
-                if line.startswith("Chain"):
-                    current_chain = parts[1]  # On récupère le nom de la chaîne (INPUT, OUTPUT, etc.)
-                    continue
-                if line.startswith("target"):
-                    continue
-
-                # Si la ligne ne contient pas assez de colonnes, on l'ignore
-                if len(parts) < 5:
-                    continue
-
-                # Extraire les informations de la ligne
-                target = parts[0]
-                protocol = parts[1]
-                opt = parts[2]
-                source = parts[3]
-                destination = parts[4]
-
-                # Chercher un port si applicable
-                port = ""
-                port_match = port_regex.search(line)
-                if port_match:
-                    protocol = port_match.group(1)
-                    port = port_match.group(2)
-
-                # Ajouter la règle à la liste
-                rules.append({
-                    'computer_name': computer_name,
-                    'chain': current_chain,
-                    'target': target,
-                    'prot': protocol,
-                    'source': source,
-                    'destination': destination,
-                    'port': port  # À adapter si nécessaire
-                })
-                counter += 1
-
-            # Écrire les règles dans le fichier CSV
-            writer.writerows(rules)
             if counter >= 1:
                 print(green(f"Firewall rules have been written into {output_file}"))
             else:
@@ -1050,6 +1122,76 @@ def get_linux_used_space(mount_path, computer_name):
         
     except Exception as e:
         print(red(f"[-] An error occurred while gathering disk usage information: {e}"))
+
+
+def get_linux_docker(mount_path, computer_name):
+    output_file = os.path.join(script_path, result_folder, "linux_docker.csv")
+    csv_columns = ['computer_name', 'container_name', 'exposed_ports', 'volumes', 'container_logs', 'overlay_directory']
+    print(yellow("[+] Retrieving docker containers"))
+    docker_containers_dir = os.path.join(mount_path, "var/lib/docker/containers")
+    overlay_dir = os.path.join(mount_path, "var/lib/docker/overlay2")
+  
+    try:
+        counter = 0
+        with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
+            writer.writeheader()
+
+            if not os.path.exists(docker_containers_dir):
+                print(yellow(f"[-] {docker_containers_dir} does not exist"))
+                return
+            for container_id in os.listdir(docker_containers_dir):
+                container_path = os.path.join(docker_containers_dir, container_id)
+                config_path = os.path.join(container_path, "config.v2.json")
+                if not os.path.isfile(config_path):
+                    continue
+
+                try:
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+
+                    container_name = data.get("Name", "").lstrip("/")
+                    container_ports = ",".join(data.get("Config", {}).get("ExposedPorts", {}).keys()) if data.get("Config", {}).get("ExposedPorts") else ""
+                    container_logs = data.get("LogPath", {}) if data.get("LogPath") else ""
+                    mounts = data.get("MountPoints", {})
+                    volumes = ",".join([m.get("Source", "") for m in mounts.values() if "Source" in m])
+                    # Extraction du répertoire overlay
+                    overlay_directory = ""
+                    graphdriver = data.get("GraphDriver", {})
+                    graph_data = graphdriver.get("Data", {})
+                    merged_dir = graph_data.get("MergedDir", "")
+                    if merged_dir:
+                        # Si le path commence par /var/lib/docker, le remplacer par mount_path
+                        if merged_dir.startswith("/var/lib/docker"):
+                            overlay_directory = os.path.join(mount_path, merged_dir.lstrip("/"))
+                        else:
+                            overlay_directory = merged_dir
+                    else:
+                        overlay_directory = "Unknown"
+
+
+                    writer.writerow({
+                        "computer_name": computer_name,
+                        "container_name": container_name,
+                        "exposed_ports": container_ports,
+                        "volumes": volumes,
+                        "container_logs": container_logs,
+                        "overlay_directory": overlay_directory
+                    })
+                    counter += 1
+
+                except Exception as e:
+                    print(red(f"[-] Error processing container {container_id}: {e}"))
+            if counter >= 1:
+                print(green(f"Dockers data has been written into {output_file}"))
+            else:
+                print(yellow(f"No dockers data found, {output_file} should be empty"))
+
+
+    except Exception as e:
+        print(red(f"[-] Error writing Docker info: {e}"))
+
+    
 
 def get_windows_machine_name(mount_path):
     #chaine = "Informations du système Windows"
@@ -2330,7 +2472,9 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
             if "/doc/" in file_path or "/usr/share/" in file_path or "/usr/lib" in file_path:
                 local_pbar.update(1)
                 continue
-
+            elif "docker-compose.yml" or "docker-compose.yaml" in file_path:
+                result.update({"type": "docker_file"})
+                csv_queue.put(result)
             if "kdb" in extension:
                 result.update({"type": "keepass_file"})
                 csv_queue.put(result)
@@ -2443,7 +2587,7 @@ def get_files_of_interest(mount_path, computer_name, platform):
         output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
 
 
-    files_to_search = ['wallet.*', '*.wallet', "*.kdbx", '*.tox']
+    files_to_search = ['wallet.*', '*.wallet', "*.kdbx", '*.tox', 'docker-compose.y*ml']
     file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.mdb", "*.psql", "*.pgsql", "*.frm",
                             "*.tbl", "*.mdf", "*.ndf", "*.ldf", "*.bson", "*.json", "*.dat", "*.db", "*.sqlite",
                             "*.dmp", "pagefile.sys", "*.sh", "*.ps1", "*.py", "*.pl"]
@@ -3054,6 +3198,7 @@ if len(sys.argv) > 1:
             get_command_history(mount_path, computer_name)
             get_firewall_rules(mount_path, computer_name)
             get_linux_used_space(mount_path, computer_name)
+            get_linux_docker(mount_path, computer_name)
             get_linux_browsing_history(mount_path, computer_name)
             get_linux_browsing_data(mount_path, computer_name)
             get_linux_crontab(mount_path, computer_name)
