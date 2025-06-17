@@ -510,9 +510,9 @@ def list_installed_apps(mount_path, computer_name):
 
             # Pour Debian/Ubuntu
             if distro in ["debian", "ubuntu", "kali"]:
-                chroot_command = "zgrep 'install\\|upgrade' /var/log/dpkg.log* | sort"
+                chroot_command_log = "zgrep 'install\\|upgrade' /var/log/dpkg.log* | sort"
                 #chroot_command = "zgrep 'install' /var/log/dpkg.log* | sort | cut -f1,2,4 -d' '"
-                result, _ = chroot_and_run_command(mount_path, chroot_command)
+                result, _ = chroot_and_run_command(mount_path, chroot_command_log)
                 #print(f"{result}")
                 # Regex pour capturer le nom du paquet et la version
                 date_pattern = r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})"
@@ -541,7 +541,23 @@ def list_installed_apps(mount_path, computer_name):
                             'version': version
                         })
                         counter += 1
+                else:
+                    print("No packages informations found in log files. Trying with dpkg tool...")
+                    chroot_command_dpkg = 'dpkg -l | grep "ii"'
+                    result, _ = chroot_and_run_command(mount_path, chroot_command_dpkg)
+                    if result:
+                        for line in result.splitlines():
+                            package_name = line.split()[1]
+                            version = line.split()[2]
 
+                            writer.writerow({
+                                'computer_name': computer_name,
+                                'package_name': package_name,
+                                'install_date': "Unknown",
+                                'version': version
+                            })
+                            counter += 1
+    
             # Pour RHEL/CentOS/Fedora/AlmaLinux
             elif distro in ["rhel", "centos", "fedora", "almalinux"]:
                 chroot_command = "rpm -qa --queryformat '%{installtime:date} %{name}-%{version}-%{release}\n' | sort"
@@ -701,6 +717,9 @@ def get_firewall_rules(mount_path, computer_name):
     if os.path.isdir(ufw_dir):
         for root, _, files in os.walk(ufw_dir):
             for fname in files:
+                if not fname.endswith(".rules"):
+                    print(f"No UFW rules found")
+                    break
                 path = os.path.join(root, fname)
                 try:
                     with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -709,7 +728,7 @@ def get_firewall_rules(mount_path, computer_name):
                             line = line.strip()
                             if not line.startswith("-A"):
                                 continue
-
+    
                             chain = re.search(r"-A (\S+)", line)
                             #print(f"{chain.group(1)}")
                             protocol = re.search(r"-p (\S+)", line)
@@ -719,7 +738,7 @@ def get_firewall_rules(mount_path, computer_name):
                             dest_ip = re.search(r"-d (\S+)", line)
                             src_port = re.search(r"--sport (\d+)", line)
                             dport = re.search(r"--dport (\d+)", line)
-
+    
                             rules.append({
                                 "computer_name": computer_name,
                                 "chain": chain.group(1) if chain else "",
@@ -734,29 +753,31 @@ def get_firewall_rules(mount_path, computer_name):
                 except Exception as e:
                     #print(red(f"Error : {e}"))
                     continue
-
+    
         if rules:
             #print(f"{rules}")
             with open(output_file, mode='w', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=csv_columns)
                 writer.writeheader()
                 writer.writerows(rules)
-    # Only keep rows with IP or Port defined
-    df = pd.read_csv(output_file)
-    df_filtered = df[
-        (df['src_ip'].notna() & (df['src_ip'] != "")) |
-        (df['dest_ip'].notna() & (df['dest_ip'] != "")) |
-        (df['src_port'].notna() & (df['src_port'] != "")) |
-        (df['dest_port'].notna() & (df['dest_port'] != ""))
-    ]
-    df_filtered = df_filtered.drop_duplicates()
-    df_filtered.to_csv(output_file, index=False)
-    if len(df) > 1:
+        # Only keep rows with IP or Port defined
+            try:
+                df = pd.read_csv(output_file)
+                df_filtered = df[
+                    (df['src_ip'].notna() & (df['src_ip'] != "")) |
+                    (df['dest_ip'].notna() & (df['dest_ip'] != "")) |
+                    (df['src_port'].notna() & (df['src_port'] != "")) |
+                    (df['dest_port'].notna() & (df['dest_port'] != ""))
+                ]
+                df_filtered = df_filtered.drop_duplicates()
+                df_filtered.to_csv(output_file, index=False)
+            except:
+                pass
+    if counter > 1:
         print(green(f"Firewall rules has been written into {output_file}"))
     else:
-        print(yellow(f"No firewall, {output_file} should be empty"))
-
-
+        print(yellow(f"No firewall rules found. {output_file} should be empty"))
+    
 
 
 
@@ -1079,7 +1100,7 @@ def get_linux_used_space(mount_path, computer_name):
 def get_linux_docker(mount_path, computer_name):
     output_file = os.path.join(script_path, result_folder, "linux_docker.csv")
     csv_columns = ['computer_name', 'container_name', 'exposed_ports', 'volumes', 'container_logs', 'overlay_directory']
-    print(yellow("[+] Retrieving docker containers"))
+    print(yellow("[+] Retrieving docker containers information..."))
     docker_containers_dir = os.path.join(mount_path, "var/lib/docker/containers")
     overlay_dir = os.path.join(mount_path, "var/lib/docker/overlay2")
   
@@ -2432,6 +2453,9 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
                 local_pbar.update(1)
                 continue
             elif filename == "docker-compose.yml" or filename == "docker-compose.yaml":
+                result.update({"type": "docker-compose_file"})
+                csv_queue.put(result)
+            elif filename == "Dockerfile":
                 result.update({"type": "docker_file"})
                 csv_queue.put(result)
             elif "kdb" in extension:
@@ -2546,7 +2570,7 @@ def get_files_of_interest(mount_path, computer_name, platform):
         output_file = f"{script_path}/{result_folder}/files_of_interest.csv"
 
 
-    files_to_search = ['wallet.*', '*.wallet', "*.kdbx", '*.tox', 'docker-compose.y*ml']
+    files_to_search = ['wallet.*', '*.wallet', "*.kdbx", '*.tox', 'docker-compose.yml', "Dockerfile"]
     file_types_to_search = ["*.txt", "*.exe", "*.exe_", "*.sql", "*.ibd", "*.mdb", "*.psql", "*.pgsql", "*.frm",
                             "*.tbl", "*.mdf", "*.ndf", "*.ldf", "*.bson", "*.json", "*.dat", "*.db", "*.sqlite",
                             "*.dmp", "pagefile.sys", "*.sh", "*.ps1", "*.py", "*.pl"]
