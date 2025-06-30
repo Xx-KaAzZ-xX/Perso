@@ -218,105 +218,191 @@ def get_system_info(mount_path):
     except Exception as e:
         print(red(f"[-] An error occurred while gathering system information: {e}"))
 
-def get_network_info(mount_path, computer_name):
 
-    output_file = script_path + "/" + result_folder + "/linux_network_info.csv"
+def get_network_info(mount_path, computer_name):
+    output_file = os.path.join(script_path, result_folder, "linux_network_info.csv")
     print(yellow("[+] Retrieving Network information..."))
-    # Chemins potentiels pour les fichiers de configuration réseau
+
     interfaces_file = os.path.join(mount_path, "etc/network/interfaces")
     netplan_dir = os.path.join(mount_path, "etc/netplan/")
     redhat_ifcfg_dir = os.path.join(mount_path, "etc/sysconfig/network-scripts/")
+    syslog_file = os.path.join(mount_path, "var/log/syslog")
 
-        # Préparation pour l'écriture dans le fichier CSV
     csv_columns = ['computer_name', 'interface', 'ip_address', 'netmask', 'gateway']
-    iface, ip, netmask, gateway = None, None, None, None
-    with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
-        writer.writeheader()
-        try:
-            # Extraction des informations des interfaces
-            if os.path.exists(interfaces_file):
-                #print(f"Trying with {interfaces_file}") 
-                with open(interfaces_file) as f:
-                    #iface, ip, netmask, gateway = None, None, None, None
-                    for line in f:
-                        line = line.strip()
-                        if line.startswith('iface'):
-                            iface = line.split()[1]
-                        if 'address' in line:
-                            ip = line.split()[1]
-                        if 'netmask' in line:
-                            netmask = line.split()[1]
-                        if 'gateway' in line:
-                            gateway = line.split()[1]
-                    if iface:
-                        writer.writerow({'computer_name': computer_name, 'interface' : iface, 'ip_address': ip, 'netmask': netmask, 'gateway' : gateway})
-                ## if IP address is empty, we'll check into interfaces.d directory
-                if not ip:
-                    interfaces_d_dir = os.path.join(mount_path, "etc/network/interfaces.d")
-                    if os.path.isdir(interfaces_d_dir):
-                        for filename in os.listdir(interfaces_d_dir):
-                            filepath = os.path.join(interfaces_d_dir, filename)
-                            if os.path.isfile(filepath):
-                                with open(filepath) as subf:
-                                    for line in subf:
-                                        line = line.strip()
-                                        if line.startswith('iface'):
-                                            iface = line.split()[1]
-                                        if 'address' in line:
-                                            ip = line.split()[1]
-                                        if 'netmask' in line:
-                                            netmask = line.split()[1]
-                                        if 'gateway' in line:
-                                            gateway = line.split()[1]
-                                if iface and ip:
-                                    writer.writerow({'computer_name': computer_name, 'interface': iface, 'ip_address': ip, 'netmask': netmask, 'gateway': gateway})
+    interfaces = []
 
-        # Extraction des informations pour RedHat (ifcfg)
-            elif os.path.exists(redhat_ifcfg_dir):
-                for filename in os.listdir(redhat_ifcfg_dir):
-                    #print(f"Trying with {filename}")
-                    if filename.startswith('ifcfg-'):
-                        with open(os.path.join(redhat_ifcfg_dir, filename)) as f:
-                            iface, ip, netmask, gateway = None, None, None, None
-                            for line in f:
-                                if line.startswith('DEVICE'):
-                                    iface = line.split('=')[1].strip()
-                                if line.startswith('IPADDR'):
-                                    ip = line.split('=')[1].strip()
-                                if line.startswith('NETMASK'):
-                                    netmask = line.split('=')[1].strip()
-                                if line.startswith('GATEWAY'):
-                                    gateway = line.split('=')[1].strip()
-                            if iface:
-                                writer.writerow({'computer_name': computer_name, 'interface' : iface, 'ip_address': ip, 'netmask': netmask, 'gateway' : gateway})
+    try:
+        # --- Debian style ---
+        if os.path.exists(interfaces_file):
+            current_entry = {}
+            with open(interfaces_file) as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("iface"):
+                        if current_entry:
+                            interfaces.append(current_entry)
+                        iface = line.split()[1]
+                        current_entry = {
+                            'computer_name': computer_name,
+                            'interface': iface,
+                            'ip_address': '',
+                            'netmask': '',
+                            'gateway': ''
+                        }
+                    elif 'address' in line and current_entry:
+                        ip_candidate = line.split()[1]
+                        if re.match(r"^(\d{1,3}\.){3}\d{1,3}$", ip_candidate) or re.match(r"^[0-9a-fA-F:]+$", ip_candidate):
+                            current_entry['ip_address'] = ip_candidate
+                        else:
+                            current_entry['ip_address'] = ''
+                    elif 'netmask' in line and current_entry:
+                        current_entry['netmask'] = line.split()[1]
+                    elif 'gateway' in line and current_entry:
+                        current_entry['gateway'] = line.split()[1]
+            if current_entry:
+                interfaces.append(current_entry)
 
-            elif os.path.exists(netplan_dir):
-                for filename in os.listdir(netplan_dir):
-                    if filename.endswith('.yaml') or filename.endswith('.yml'):  # Vérifier que c'est un fichier YAML
-                        print(f"Trying with {filename}")
-                        with open(os.path.join(netplan_dir, filename), 'r') as f:
-                            netplan_config = yaml.safe_load(f)  # Charger le contenu YAML
-                            # Accéder à la configuration des réseaux
-                            if 'network' in netplan_config and 'ethernets' in netplan_config['network']:
-                                for iface, iface_config in netplan_config['network']['ethernets'].items():
-                                    # Récupérer l'adresse IP et le masque
-                                    ip_info = iface_config.get('addresses', [])
-                                    if ip_info:
-                                        # Supposons qu'il y ait une seule adresse IP configurée
-                                        ip_mask = ip_info[0]  # Prendre la première adresse
-                                        ip, netmask = ip_mask.split('/')  # Séparer l'adresse IP du masque
-                                        # Récupérer la passerelle
-                                        gateway = None
-                                    if 'routes' in iface_config:
-                                        for route in iface_config['routes']:
-                                            if 'to' in route and route['to'] == 'default':
-                                                gateway = route['via']
+            # interfaces.d
+            interfaces_d_dir = os.path.join(mount_path, "etc/network/interfaces.d")
+            if os.path.isdir(interfaces_d_dir):
+                for filename in os.listdir(interfaces_d_dir):
+                    path = os.path.join(interfaces_d_dir, filename)
+                    if os.path.isfile(path):
+                        with open(path) as subf:
+                            entry = {
+                                'computer_name': computer_name,
+                                'interface': '',
+                                'ip_address': '',
+                                'netmask': '',
+                                'gateway': ''
+                            }
+                            for line in subf:
+                                line = line.strip()
+                                if line.startswith('iface'):
+                                    entry['interface'] = line.split()[1]
+                                elif 'address' in line:
+                                    ip_candidate = line.split()[1]
+                                    if re.match(r"^(\d{1,3}\.){3}\d{1,3}$", ip_candidate) or re.match(r"^[0-9a-fA-F:]+$", ip_candidate):
+                                        entry['ip_address'] = ip_candidate
+                                    else:
+                                        entry['ip_address'] = ''
+                                elif 'netmask' in line:
+                                    entry['netmask'] = line.split()[1]
+                                elif 'gateway' in line:
+                                    entry['gateway'] = line.split()[1]
+                            if entry['interface']:
+                                interfaces.append(entry)
 
-                            writer.writerow({'computer_name': computer_name, 'interface': iface, 'ip_address': ip, 'netmask': netmask, 'gateway': gateway})
-            print(green(f"Network information has been written to {output_file}"))
-        except Exception as e:
-            print(red(f"Error retrieving Linux network information : {e}"))
+        # --- RedHat style ---
+        elif os.path.isdir(redhat_ifcfg_dir):
+            for filename in os.listdir(redhat_ifcfg_dir):
+                if filename.startswith('ifcfg-'):
+                    entry = {
+                        'computer_name': computer_name,
+                        'interface': '',
+                        'ip_address': '',
+                        'netmask': '',
+                        'gateway': ''
+                    }
+                    with open(os.path.join(redhat_ifcfg_dir, filename)) as f:
+                        for line in f:
+                            if line.startswith('DEVICE'):
+                                entry['interface'] = line.split('=')[1].strip()
+                            elif line.startswith('IPADDR'):
+                                entry['ip_address'] = line.split('=')[1].strip()
+                            elif line.startswith('NETMASK'):
+                                entry['netmask'] = line.split('=')[1].strip()
+                            elif line.startswith('GATEWAY'):
+                                entry['gateway'] = line.split('=')[1].strip()
+                    if entry['interface']:
+                        interfaces.append(entry)
+
+        # --- Netplan style ---
+        elif os.path.isdir(netplan_dir):
+            for filename in os.listdir(netplan_dir):
+                if filename.endswith(('.yaml', '.yml')):
+                    path = os.path.join(netplan_dir, filename)
+                    try:
+                        with open(path, 'r', encoding='utf-8') as f:
+                            config = yaml.safe_load(f)
+                        if 'network' in config and 'ethernets' in config['network']:
+                            for iface, conf in config['network']['ethernets'].items():
+                                ip, netmask, gateway = '', '', ''
+                                ip_list = conf.get('addresses', [])
+                                if ip_list:
+                                    ip_mask = ip_list[0]
+                                    if '/' in ip_mask:
+                                        ip, netmask = ip_mask.split('/')
+                                gateway = conf.get('gateway4', '')
+                                interfaces.append({
+                                    'computer_name': computer_name,
+                                    'interface': iface,
+                                    'ip_address': ip,
+                                    'netmask': netmask,
+                                    'gateway': gateway
+                                })
+                                counter += 1
+            
+                    except Exception as e:
+                        print(red(f"[-] Failed to parse netplan YAML file {filename}: {e}"))
+            if counter > 1:
+               print(green(f"Network information have been written into {output_file}"))
+        # --- Écriture CSV ---
+        if interfaces:
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
+            with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
+                writer.writeheader()
+                for entry in interfaces:
+                    writer.writerow(entry)
+            #print(green(f"Network information has been written to {output_file}"))
+            df = pd.read_csv(output_file, dtype={'ip_address': str})
+            #df['ip_address'] = df['ip_address'].astype(str)
+            modified = False
+
+            # Identifier interfaces sans IP
+            missing_ip_rows = df[df['ip_address'].isnull() | (df['ip_address'] == '') | (df['ip_address'] == 'Nan')]
+            #print(missing_ip_rows)
+            if not missing_ip_rows.empty:
+               print(missing_ip_rows)
+               try:
+                   with open(syslog_file, "r", encoding="utf-8", errors="ignore") as f:
+                       lines = f.readlines()[::-1]  # lecture en sens inverse
+
+                   for idx, row in missing_ip_rows.iterrows():
+                       iface = row['interface']
+                       print(f"searching DHCP for {iface}")
+                       found = False
+                       for i, line in enumerate(lines):
+                           if re.search(rf'DHCPREQUEST.*on {re.escape(iface)}\b', line, re.IGNORECASE):
+                               #print(line)
+                               # Chercher bound/DHCPACK dans les lignes suivantes
+                               for follow_line in lines[i:]:
+                                   if 'bound to' in follow_line or 'DHCPACK' in follow_line:
+                                       #print(follow_line)
+                                   #if re.search(rf'bound to .* on {re.escape(iface)}\b', line, re.IGNORECASE):
+                                       ip_match = re.search(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', follow_line)
+                                       if ip_match:
+                                           print(str(ip_match.group()))
+                                           df.at[idx, 'ip_address'] = str(ip_match.group())
+                                           modified = True
+                                           found = True
+                                           df.to_csv(output_file, index=False)
+                                           break
+                                   # stop dès qu'on quitte le bloc DHCP
+                                   if 'DHCPREQUEST' in follow_line and iface not in follow_line:
+                                       break
+                               if found:
+                                   break
+               except Exception as e:
+                   print(red(f"Error retrieving DHCP IP address from syslog: {e}"))
+            
+        else:
+            print(yellow(f"No network configuration found."))
+
+    except Exception as e:
+        print(red(f"Error retrieving Linux network information: {e}"))
+
 
 
 def get_users_and_groups(mount_path, computer_name):
@@ -485,7 +571,11 @@ def list_connections(mount_path, computer_name):
                             print(red(f"Error retrieving connections : {e}"))
 
     if counter >= 1:
-        print(green(f"Connections informations have been written into {output_file}"))
+        print(yellow(f"Removing duplicates entries into {output_file}"))
+        df = pd.read_csv(output_file)
+        df = df.drop_duplicates(subset=['computer_name', 'connection_date', 'user', 'src_ip'])
+        df.to_csv(output_file, index=False)
+        print(green(f"Connections have been written into {output_file}"))
     else:
         print(yellow(f" No connections has been found, {output_file} is empty"))
 
@@ -707,6 +797,7 @@ def get_command_history(mount_path, computer_name):
 
 
 def get_firewall_rules(mount_path, computer_name):
+    print(yellow("[+] Retrieving firewall rules..."))
     output_file = os.path.join(script_path, result_folder, "linux_firewall_rules.csv")
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
 
@@ -718,8 +809,7 @@ def get_firewall_rules(mount_path, computer_name):
         for root, _, files in os.walk(ufw_dir):
             for fname in files:
                 if not fname.endswith(".rules"):
-                    print(f"No UFW rules found")
-                    break
+                    continue
                 path = os.path.join(root, fname)
                 try:
                     with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -750,6 +840,7 @@ def get_firewall_rules(mount_path, computer_name):
                                 "dest_port": dport.group(1) if dport else "",
                                 "firewall": "ufw"
                             })
+                            counter += 1
                 except Exception as e:
                     #print(red(f"Error : {e}"))
                     continue
