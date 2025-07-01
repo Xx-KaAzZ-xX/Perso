@@ -221,82 +221,121 @@ def get_system_info(mount_path):
 
 def get_network_info(mount_path, computer_name):
     output_file = os.path.join(script_path, result_folder, "linux_network_info.csv")
-    print(yellow("[+] Retrieving Network information..."))
-
-    interfaces_file = os.path.join(mount_path, "etc/network/interfaces")
-    netplan_dir = os.path.join(mount_path, "etc/netplan/")
-    redhat_ifcfg_dir = os.path.join(mount_path, "etc/sysconfig/network-scripts/")
     syslog_file = os.path.join(mount_path, "var/log/syslog")
-
     csv_columns = ['computer_name', 'interface', 'ip_address', 'netmask', 'gateway']
     interfaces = []
+    print(yellow("Retrieving network configuration..."))
 
-    try:
-        # --- Debian style ---
-        if os.path.exists(interfaces_file):
+    interfaces_file = os.path.join(mount_path, "etc/network/interfaces")
+    interfaces_d_dir = os.path.join(mount_path, "etc/network/interfaces.d")
+    netplan_dir = os.path.join(mount_path, "etc/netplan/")
+    redhat_ifcfg_dir = os.path.join(mount_path, "etc/sysconfig/network-scripts/")
+
+    # --- interfaces ---
+    if os.path.exists(interfaces_file):
+        with open(interfaces_file) as f:
             current_entry = {}
-            with open(interfaces_file) as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("iface"):
-                        if current_entry:
-                            interfaces.append(current_entry)
-                        iface = line.split()[1]
-                        current_entry = {
-                            'computer_name': computer_name,
-                            'interface': iface,
-                            'ip_address': '',
-                            'netmask': '',
-                            'gateway': ''
-                        }
-                    elif 'address' in line and current_entry:
-                        ip_candidate = line.split()[1]
-                        if re.match(r"^(\d{1,3}\.){3}\d{1,3}$", ip_candidate) or re.match(r"^[0-9a-fA-F:]+$", ip_candidate):
-                            current_entry['ip_address'] = ip_candidate
-                        else:
-                            current_entry['ip_address'] = ''
-                    elif 'netmask' in line and current_entry:
-                        current_entry['netmask'] = line.split()[1]
-                    elif 'gateway' in line and current_entry:
-                        current_entry['gateway'] = line.split()[1]
+            for line in f:
+                line = line.strip()
+                if line.startswith("iface"):
+                    if current_entry:
+                        interfaces.append(current_entry)
+                    parts = line.split()
+                    current_iface = parts[1]
+                    current_entry = {
+                        'computer_name': computer_name,
+                        'interface': current_iface,
+                        'ip_address': '',
+                        'netmask': '',
+                        'gateway': ''
+                    }
+                elif 'address' in line:
+                    ip = line.split()[1]
+                    try:
+                        ipaddress.ip_address(ip)
+                        current_entry['ip_address'] = ip
+                    except:
+                        continue
+                elif 'netmask' in line:
+                    current_entry['netmask'] = line.split()[1]
+                elif 'gateway' in line:
+                    current_entry['gateway'] = line.split()[1]
             if current_entry:
                 interfaces.append(current_entry)
 
-            # interfaces.d
-            interfaces_d_dir = os.path.join(mount_path, "etc/network/interfaces.d")
-            if os.path.isdir(interfaces_d_dir):
-                for filename in os.listdir(interfaces_d_dir):
-                    path = os.path.join(interfaces_d_dir, filename)
-                    if os.path.isfile(path):
-                        with open(path) as subf:
+        if os.path.isdir(interfaces_d_dir):
+            for fname in os.listdir(interfaces_d_dir):
+                path = os.path.join(interfaces_d_dir, fname)
+                if os.path.isfile(path):
+                    with open(path) as subf:
+                        current_entry = {}
+                        for line in subf:
+                            line = line.strip()
+                            if line.startswith('iface'):
+                                if current_entry:
+                                    interfaces.append(current_entry)
+                                parts = line.split()
+                                current_iface = parts[1]
+                                current_entry = {
+                                    'computer_name': computer_name,
+                                    'interface': current_iface,
+                                    'ip_address': '',
+                                    'netmask': '',
+                                    'gateway': ''
+                                }
+                            elif 'address' in line:
+                                ip = line.split()[1]
+                                try:
+                                    ipaddress.ip_address(ip)
+                                    current_entry['ip_address'] = ip
+                                except:
+                                    continue
+                            elif 'netmask' in line:
+                                current_entry['netmask'] = line.split()[1]
+                            elif 'gateway' in line:
+                                current_entry['gateway'] = line.split()[1]
+                        if current_entry:
+                            interfaces.append(current_entry)
+
+    # --- netplan ---
+    elif os.path.isdir(netplan_dir):
+        for fname in os.listdir(netplan_dir):
+            if fname.endswith(".yml") or fname.endswith(".yaml"):
+                try:
+                    with open(os.path.join(netplan_dir, fname)) as f:
+                        config = yaml.safe_load(f)
+                        net = config.get("network", {}).get("ethernets", {})
+                        for iface, conf in net.items():
                             entry = {
                                 'computer_name': computer_name,
-                                'interface': '',
+                                'interface': iface,
                                 'ip_address': '',
                                 'netmask': '',
                                 'gateway': ''
                             }
-                            for line in subf:
-                                line = line.strip()
-                                if line.startswith('iface'):
-                                    entry['interface'] = line.split()[1]
-                                elif 'address' in line:
-                                    ip_candidate = line.split()[1]
-                                    if re.match(r"^(\d{1,3}\.){3}\d{1,3}$", ip_candidate) or re.match(r"^[0-9a-fA-F:]+$", ip_candidate):
-                                        entry['ip_address'] = ip_candidate
-                                    else:
-                                        entry['ip_address'] = ''
-                                elif 'netmask' in line:
-                                    entry['netmask'] = line.split()[1]
-                                elif 'gateway' in line:
-                                    entry['gateway'] = line.split()[1]
-                            if entry['interface']:
-                                interfaces.append(entry)
+                            ipinfo = conf.get("addresses", [])
+                            if ipinfo:
+                                try:
+                                    ip, mask = ipinfo[0].split("/")
+                                    ipaddress.ip_address(ip)
+                                    entry['ip_address'] = ip
+                                    entry['netmask'] = mask
+                                except:
+                                    pass
+                            routes = conf.get("routes", [])
+                            for route in routes:
+                                if route.get('to') == 'default':
+                                    entry['gateway'] = route.get('via', '')
+                            interfaces.append(entry)
+                except Exception as e:
+                    continue
 
-        # --- RedHat style ---
-        elif os.path.isdir(redhat_ifcfg_dir):
-            for filename in os.listdir(redhat_ifcfg_dir):
-                if filename.startswith('ifcfg-'):
+    # --- RedHat ifcfg ---
+    elif os.path.isdir(redhat_ifcfg_dir):
+        for fname in os.listdir(redhat_ifcfg_dir):
+            if fname.startswith("ifcfg-"):
+                path = os.path.join(redhat_ifcfg_dir, fname)
+                with open(path) as f:
                     entry = {
                         'computer_name': computer_name,
                         'interface': '',
@@ -304,107 +343,74 @@ def get_network_info(mount_path, computer_name):
                         'netmask': '',
                         'gateway': ''
                     }
-                    with open(os.path.join(redhat_ifcfg_dir, filename)) as f:
-                        for line in f:
-                            if line.startswith('DEVICE'):
-                                entry['interface'] = line.split('=')[1].strip()
-                            elif line.startswith('IPADDR'):
-                                entry['ip_address'] = line.split('=')[1].strip()
-                            elif line.startswith('NETMASK'):
-                                entry['netmask'] = line.split('=')[1].strip()
-                            elif line.startswith('GATEWAY'):
-                                entry['gateway'] = line.split('=')[1].strip()
+                    for line in f:
+                        if line.startswith("DEVICE"):
+                            entry['interface'] = line.split("=")[1].strip()
+                        elif line.startswith("IPADDR"):
+                            entry['ip_address'] = line.split("=")[1].strip()
+                        elif line.startswith("NETMASK"):
+                            entry['netmask'] = line.split("=")[1].strip()
+                        elif line.startswith("GATEWAY"):
+                            entry['gateway'] = line.split("=")[1].strip()
                     if entry['interface']:
                         interfaces.append(entry)
 
-        # --- Netplan style ---
-        elif os.path.isdir(netplan_dir):
-            for filename in os.listdir(netplan_dir):
-                if filename.endswith(('.yaml', '.yml')):
-                    path = os.path.join(netplan_dir, filename)
-                    try:
-                        with open(path, 'r', encoding='utf-8') as f:
-                            config = yaml.safe_load(f)
-                        if 'network' in config and 'ethernets' in config['network']:
-                            for iface, conf in config['network']['ethernets'].items():
-                                ip, netmask, gateway = '', '', ''
-                                ip_list = conf.get('addresses', [])
-                                if ip_list:
-                                    ip_mask = ip_list[0]
-                                    if '/' in ip_mask:
-                                        ip, netmask = ip_mask.split('/')
-                                gateway = conf.get('gateway4', '')
-                                interfaces.append({
-                                    'computer_name': computer_name,
-                                    'interface': iface,
-                                    'ip_address': ip,
-                                    'netmask': netmask,
-                                    'gateway': gateway
-                                })
-                                counter += 1
-            
-                    except Exception as e:
-                        print(red(f"[-] Failed to parse netplan YAML file {filename}: {e}"))
-            if counter > 1:
-               print(green(f"Network information have been written into {output_file}"))
-        # --- Écriture CSV ---
-        if interfaces:
-            os.makedirs(os.path.dirname(output_file), exist_ok=True)
-            with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
-                writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
-                writer.writeheader()
-                for entry in interfaces:
-                    writer.writerow(entry)
-            #print(green(f"Network information has been written to {output_file}"))
-            df = pd.read_csv(output_file, dtype={'ip_address': str})
-            #df['ip_address'] = df['ip_address'].astype(str)
-            modified = False
+    # --- Écriture initiale ---
+    if interfaces:
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
+            writer.writeheader()
+            for entry in interfaces:
+                writer.writerow(entry)
 
-            # Identifier interfaces sans IP
-            missing_ip_rows = df[df['ip_address'].isnull() | (df['ip_address'] == '') | (df['ip_address'] == 'Nan')]
-            #print(missing_ip_rows)
-            if not missing_ip_rows.empty:
-               print(missing_ip_rows)
-               try:
-                   with open(syslog_file, "r", encoding="utf-8", errors="ignore") as f:
-                       lines = f.readlines()[::-1]  # lecture en sens inverse
+        df = pd.read_csv(output_file)
+        modified = False
 
-                   for idx, row in missing_ip_rows.iterrows():
-                       iface = row['interface']
-                       print(f"searching DHCP for {iface}")
-                       found = False
-                       for i, line in enumerate(lines):
-                           if re.search(rf'DHCPREQUEST.*on {re.escape(iface)}\b', line, re.IGNORECASE):
-                               #print(line)
-                               # Chercher bound/DHCPACK dans les lignes suivantes
-                               for follow_line in lines[i:]:
-                                   if 'bound to' in follow_line or 'DHCPACK' in follow_line:
-                                       #print(follow_line)
-                                   #if re.search(rf'bound to .* on {re.escape(iface)}\b', line, re.IGNORECASE):
-                                       ip_match = re.search(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', follow_line)
-                                       if ip_match:
-                                           print(str(ip_match.group()))
-                                           df.at[idx, 'ip_address'] = str(ip_match.group())
-                                           modified = True
-                                           found = True
-                                           df.to_csv(output_file, index=False)
-                                           break
-                                   # stop dès qu'on quitte le bloc DHCP
-                                   if 'DHCPREQUEST' in follow_line and iface not in follow_line:
-                                       break
-                               if found:
-                                   break
-               except Exception as e:
-                   print(red(f"Error retrieving DHCP IP address from syslog: {e}"))
-            
-        else:
-            print(yellow(f"No network configuration found."))
+        def is_valid_ip(ip):
+            try:
+                ipaddress.ip_address(ip)
+                return True
+            except:
+                return False
 
-    except Exception as e:
-        print(red(f"Error retrieving Linux network information: {e}"))
+        missing = df[df['ip_address'].isnull() | (df['ip_address'] == '') | (~df['ip_address'].apply(lambda x: is_valid_ip(str(x))))]
+
+        if not missing.empty and os.path.isfile(syslog_file):
+            with open(syslog_file, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()[::-1]
+
+            for idx, row in missing.iterrows():
+                iface = row['interface']
+                for i, line in enumerate(lines):
+                    if re.search(rf'DHCPREQUEST.*on {re.escape(iface)}\b', line, re.IGNORECASE):
+                        for follow_line in lines[i:]:
+                            if 'bound to' in follow_line or 'DHCPACK' in follow_line:
+                                ip_match = re.search(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', follow_line)
+                                if ip_match:
+                                    df['ip_address'] = df['ip_address'].astype(str)
+                                    df.at[idx, 'ip_address'] = ip_match.group()
+                                    modified = True
+                                    break
+                        break
+
+        if modified:
+            df.to_csv(output_file, index=False)
+
+        print(green(f"[+] Network information written to {output_file}"))
+
+    else:
+        print(red("[-] No network configuration found."))
 
 
-
+    '''
+    elif not interfaces:
+        with open(output_file, mode='w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
+            writer.writeheader()
+            cloud_init_file = os.path.join(mount_path, "var/log/cloud-init.log"
+    '''
+    
 def get_users_and_groups(mount_path, computer_name):
     output_file = script_path + "/" + result_folder + "/" + "linux_users_and_groups.csv"
     users = []
@@ -547,9 +553,10 @@ def list_connections(mount_path, computer_name):
                                 writer.writerow({'computer_name': computer_name, 'connection_date': connection_date, 'user': user, 'src_ip': src_ip, 'source_file': source_file})
             elif os.path.isdir(journal_dir):
                 source_file = "journal_dir"
-                grep_cmd = f"journalctl -D {journal_dir} | grep 'Accepted'"
-                result_grep = subprocess.run(grep_cmd, shell=True, capture_output=True, text=True)
-                for line in result_grep.stdout.splitlines():
+                #grep_cmd = f"journalctl -D {journal_dir} | grep 'Accepted'"
+                journalctl_cmd = ["journalctl", "-D", journal_dir, "--grep=Accepted", "--no-pager", "--output=short"]
+                result_cmd = subprocess.run(journalctl_cmd, shell=True, capture_output=True, text=True)
+                for line in result_cmd.stdout.splitlines():
                     parts = line.split()
                     if "Accepted" in parts:
                         try:
@@ -797,7 +804,6 @@ def get_command_history(mount_path, computer_name):
 
 
 def get_firewall_rules(mount_path, computer_name):
-    print(yellow("[+] Retrieving firewall rules..."))
     output_file = os.path.join(script_path, result_folder, "linux_firewall_rules.csv")
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
 
@@ -809,7 +815,8 @@ def get_firewall_rules(mount_path, computer_name):
         for root, _, files in os.walk(ufw_dir):
             for fname in files:
                 if not fname.endswith(".rules"):
-                    continue
+                    print(f"No UFW rules found")
+                    break
                 path = os.path.join(root, fname)
                 try:
                     with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -840,7 +847,6 @@ def get_firewall_rules(mount_path, computer_name):
                                 "dest_port": dport.group(1) if dport else "",
                                 "firewall": "ufw"
                             })
-                            counter += 1
                 except Exception as e:
                     #print(red(f"Error : {e}"))
                     continue
@@ -1202,7 +1208,7 @@ def get_linux_docker(mount_path, computer_name):
             writer.writeheader()
 
             if not os.path.exists(docker_containers_dir):
-                print(yellow(f"[-] {docker_containers_dir} does not exist"))
+                print(yellow(f"No dockers data found, {output_file} should be empty"))
                 return
             for container_id in os.listdir(docker_containers_dir):
                 container_path = os.path.join(docker_containers_dir, container_id)
@@ -2750,6 +2756,9 @@ def get_files_of_interest(mount_path, computer_name, platform):
 
 def validate_litecoin_legacy(address):
     try:
+        # Vérifier si l'adresse contient uniquement des caractères valides en Base58
+        if not re.match(r'^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$', address):
+            return False
         decoded = base58.b58decode(address)
         if len(decoded) != 25:
             return False
@@ -2771,6 +2780,10 @@ def validate_litecoin_legacy(address):
 
 def validate_btc_address(address):
     try:
+        # Vérifier si l'adresse contient uniquement des caractères valides en Base58
+        if not re.match(r'^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$', address):
+            return False
+
         # Décoder l'adresse Bitcoin en Base58Check
         decoded = base58.b58decode(address)
 
@@ -2800,6 +2813,10 @@ def validate_btc_address(address):
 
 def validate_bitcoin_p2sh(address):
     try:
+        # Vérifier si l'adresse contient uniquement des caractères valides en Base58
+        if not re.match(r'^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$', address):
+            return False
+
         decoded = base58.b58decode(address)
         if len(decoded) != 25:
             return False
@@ -2976,7 +2993,7 @@ def crypto_search(computer_name, mount_path):
     print(f"[+] Cleaning {output_file}...")
     try:
         df = pd.read_csv(output_file)
-        df_unique = df.drop_duplicates()
+        df_unique = df.drop_duplicates().copy()
         #df_unique.to_csv(output_file, index=False)
         if df_unique.shape[0] > 0:
             print(f"Verifying crypto address...")
@@ -2987,6 +3004,7 @@ def crypto_search(computer_name, mount_path):
                     df_unique.at[index, 'verified'] = 'true' if is_valid else 'false'
                 if row['type'] == 'bitcoin_legacy':
                     is_valid = validate_btc_address(row['match'])
+                    #print(row['match'])
                     df_unique.at[index, 'verified'] = 'true' if is_valid else 'false'
                 if row['type'] == 'bitcoin_bech32':
                     is_valid = validate_bech32_address(row['match'])
