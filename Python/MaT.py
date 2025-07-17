@@ -528,54 +528,55 @@ def list_connections(mount_path, computer_name):
                         src_ip = parts[2]
                         counter += 1
                         writer.writerow({'computer_name': computer_name, 'connection_date': connection_date, 'user': user, 'src_ip': src_ip, 'source_file': source_file})
-            # Vérification de l'existence du dossier audit et recherche des fichiers audit.log
-            audit_dir = os.path.join(log_files_path, "audit")
-            # Vérification de l'existence du dossier journalctl
-            journal_dir = os.path.join(log_files_path, "journal")
+        # Vérification de l'existence du dossier audit et recherche des fichiers audit.log
+        audit_dir = os.path.join(log_files_path, "audit")
+        #print(audit_dir)
+        # Vérification de l'existence du dossier journalctl
+        journal_dir = os.path.join(log_files_path, "journal")
+        if os.path.isdir(audit_dir):
+            audit_files = os.listdir(audit_dir)
 
-            if os.path.isdir(audit_dir):
-                audit_files = os.listdir(audit_dir)
+            for audit_file in audit_files:
+                if "audit.log" in audit_file:
+                    source_file = "audit.log"
+                    audit_file_path = os.path.join(audit_dir, audit_file)
+                    zgrep_cmd = f"zgrep 'USER_LOGIN' {audit_file_path} | grep 'success'"
+                    result_zgrep = subprocess.run(zgrep_cmd, shell=True, capture_output=True, text=True)
 
-                for audit_file in audit_files:
-                    if "audit.log" in audit_file:
-                        source_file = "audit.log"
-                        audit_file_path = os.path.join(audit_dir, audit_file)
-                        zgrep_cmd = f"zgrep 'USER_LOGIN' {audit_file_path} | grep 'success'"
-                        result_zgrep = subprocess.run(zgrep_cmd, shell=True, capture_output=True, text=True)
-
-                        for line in result_zgrep.stdout.splitlines():
-                            parts = line.split()
-                            if "success" in parts:
-                                connection_date = parts[0] + " " + parts[1]  # Date de connexion
-                                user = parts[-4]  # Utilisateur
-                                src_ip = parts[-1]  # IP source
-                                counter += 1
-                                writer.writerow({'computer_name': computer_name, 'connection_date': connection_date, 'user': user, 'src_ip': src_ip, 'source_file': source_file})
-            elif os.path.isdir(journal_dir):
-                source_file = "journal_dir"
-                #grep_cmd = f"journalctl -D {journal_dir} | grep 'Accepted'"
-                journalctl_cmd = ["journalctl", "-D", journal_dir, "--grep=Accepted", "--no-pager", "--output=short"]
-                result_cmd = subprocess.run(journalctl_cmd, shell=True, capture_output=True, text=True)
-                for line in result_cmd.stdout.splitlines():
-                    parts = line.split()
-                    if "Accepted" in parts:
-                        try:
-                            connection_date = parts[0] + " " + parts[1] + " " + parts[2]
-                            user_index = parts.index("for") + 1
-                            ip_index = parts.index("from") + 1
-                            user = parts[user_index]
-                            src_ip = parts[ip_index]
-
-                            writer.writerow({
-                                'computer_name': computer_name,
-                                'connection_date': connection_date,
-                                'user': user,
-                                'src_ip': src_ip,
-                                'source_file': source_file
-                            })
+                    for line in result_zgrep.stdout.splitlines():
+                        parts = line.split()
+                        if "success" in parts:
+                            connection_date = parts[0] + " " + parts[1]  # Date de connexion
+                            user = parts[-4]  # Utilisateur
+                            src_ip = parts[-1]  # IP source
                             counter += 1
-                        except Exception as e:
-                            print(red(f"Error retrieving connections : {e}"))
+                            writer.writerow({'computer_name': computer_name, 'connection_date': connection_date, 'user': user, 'src_ip': src_ip, 'source_file': source_file})
+        elif os.path.isdir(journal_dir):
+            source_file = "journal_dir"
+            #grep_cmd = f"journalctl -D {journal_dir} | grep 'Accepted'"
+            #journalctl_cmd = ["journalctl", "-D", journal_dir, "--grep=Accepted", "--no-pager", "--output=short"]
+            journalctl_cmd = f"journalctl -D {journal_dir} --grep=Accepted --no-pager --output=short"
+            result_cmd = subprocess.run(journalctl_cmd, shell=True, capture_output=True, text=True)
+            for line in result_cmd.stdout.splitlines():
+                parts = line.split()
+                if "Accepted" in parts:
+                    try:
+                        connection_date = parts[0] + " " + parts[1] + " " + parts[2]
+                        user_index = parts.index("for") + 1
+                        ip_index = parts.index("from") + 1
+                        user = parts[user_index]
+                        src_ip = parts[ip_index]
+
+                        writer.writerow({
+                            'computer_name': computer_name,
+                            'connection_date': connection_date,
+                            'user': user,
+                            'src_ip': src_ip,
+                            'source_file': source_file
+                        })
+                        counter += 1
+                    except Exception as e:
+                        print(red(f"Error retrieving connections : {e}"))
 
     if counter >= 1:
         print(yellow(f"Removing duplicates entries into {output_file}"))
@@ -707,6 +708,58 @@ def list_installed_apps(mount_path, computer_name):
         else:
             print(red("[-] Unknown distribution"))
 
+def get_nginx_info(computer_name, mount_path):
+    print(green(f"[+] Nginx webserver detected"))
+    print(yellow(f"Retrieving Nginx information..."))
+    nginx_dir = os.path.join(mount_path, "etc/nginx") 
+
+    output_file = os.path.join(script_path, result_folder, "linux_websites.csv")
+    csv_columns = ['computer_name', 'website_name', 'listening_port', 'webserver']
+    
+    try:
+        with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=csv_columns)
+            writer.writeheader()
+            website_enabled_dir = os.path.join(nginx_dir, "sites-enabled") 
+            if os.path.exists(website_enabled_dir):
+                vhost_files = os.listdir(website_enabled_dir)
+                for vhost_file in vhost_files:
+                    #print(vhost_file)
+                    vhost_path = os.path.join(website_enabled_dir, vhost_file)
+                    # Résoudre le lien symbolique
+                    if os.path.islink(vhost_path):
+                        real_path = os.readlink(vhost_path)
+                        #real_path2 = os.path.join(mount_path, real_path)
+                        #real_path2 = os.path.join(os.path.dirname(mount_path), real_path)
+                        real_path2 = os.path.join(mount_path, real_path.lstrip("/"))
+                    else:
+                        real_path2 = vhost_path
+                    try:
+                        with open(real_path2, 'r', encoding='utf-8', errors='ignore') as vhost:
+                            content = vhost.read()
+                            # Récupère le nom du site (server_name) et port d'écoute (listen)
+                            server_name_match = re.search(r'^\s*server_name\s+([^;]+);', content, re.MULTILINE)
+                            listen_match = re.search(r'^\s*listen\s+(\d+)', content, re.MULTILINE)
+
+                            website_name = server_name_match.group(1).strip() if server_name_match else 'unknown'
+                            listening_port = listen_match.group(1).strip() if listen_match else '80'  # défaut 80
+
+                            writer.writerow({
+                                'computer_name': computer_name,
+                                'website_name': website_name,
+                                'listening_port': listening_port,
+                                'webserver': 'nginx'
+                            })
+                    except Exception as e:
+                        print(red(f"[-] Failed to parse {vhost_file}: {e}"))
+
+
+            else:
+                print(yellow(f"{website_enabled_dir} doesn't exist"))
+    except Exception as e:
+        print(red(f"[-] Error retrieving Nginx information: {e}"))
+    
+    print(green(f"Nginx information have been written into {output_file}"))
 
 def list_services(mount_path, computer_name):
     output_file = os.path.join(script_path, result_folder, "linux_services.csv")
@@ -735,6 +788,8 @@ def list_services(mount_path, computer_name):
                     # si présente, sinon mettre une valeur par défaut ou gérer les erreurs.
                     services.append((computer_name, service_name, status))
                     counter += 1
+                    if "nginx" in service_name:
+                        get_nginx_info(computer_name, mount_path)
 
                 elif len(parts) == 3:  # service_name, 8tatus, status_at_boot
                     service_name = parts[0]
@@ -744,6 +799,8 @@ def list_services(mount_path, computer_name):
                     status_at_boot = parts[2] if len(parts) > 2 else "unknown"
                     services.append((computer_name, service_name, status, status_at_boot))
                     counter += 1
+                    if "nginx" in service_name:
+                        get_nginx_info(computer_name, mount_path)
 
             # Écrire dans le fichier CSV
             with open(output_file, mode='w', newline='') as csvfile:
