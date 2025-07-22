@@ -2753,29 +2753,30 @@ def get_files_of_interest(mount_path, computer_name, platform, threads_number):
                         print(f"Error appending path: {e}")
             except Exception as e:
                 print(f"Error in thread: {e}")
-    # Ajouter les fichiers sans extension en parallèle
-    try:
-        result_no_extension = subprocess.run(
-            find_cmd_no_extension,
-            shell=True,
-            capture_output=True,
-            text=True,
-            errors='replace'  # uniquement valide pour open(), pas ici
-        )
-        for path in result_no_extension.stdout.splitlines():
-            try:
-                files_found.append(path)
-            except Exception as e:
-                print(f"Error appending no-extension path: {e}")
-    except Exception as e:
-        print(f"Error executing find command: {e}")
+        # Ajouter les fichiers sans extension en parallèle
+        find_cmd_no_extension = f"find {mount_path} -type f ! -name '*.*'"
+        try:
+            result_no_extension = subprocess.run(
+                find_cmd_no_extension,
+                shell=True,
+                capture_output=True,
+                text=True,
+                errors='replace'  # uniquement valide pour open(), pas ici
+            )
+            for path in result_no_extension.stdout.splitlines():
+                try:
+                    files_found.append(path)
+                except Exception as e:
+                    print(f"Error appending no-extension path: {e}")
+        except Exception as e:
+            print(f"Error executing find command: {e}")
 
-    # Split files into chunks for multithreading
-    chunk_size = len(files_found) // num_threads + 1
-    print(f"There are {len(files_found)} to analyze")
-    file_chunks = [files_found[i:i + chunk_size] for i in range(0, len(files_found), chunk_size)]
+        # Split files into chunks for multithreading
+        chunk_size = len(files_found) // num_threads + 1
+        print(f"There are {len(files_found)} to analyze")
+        file_chunks = [files_found[i:i + chunk_size] for i in range(0, len(files_found), chunk_size)]
 
-    csv_queue = Queue()
+        csv_queue = Queue()
 
     with ThreadPoolExecutor(max_workers=num_threads) as executor:
         futures = [
@@ -2836,7 +2837,7 @@ def get_files_of_interest(mount_path, computer_name, platform, threads_number):
     except Exception as e:
         print(f"Error deduplicating CSV: {e}")
     ##Finally, launch crypto research
-    crypto_search(computer_name, mount_path)
+    crypto_search(computer_name, mount_path, threads_number)
 
 def validate_litecoin_legacy(address):
     try:
@@ -3404,7 +3405,7 @@ if len(sys.argv) > 1:
             get_linux_browsing_data(mount_path, computer_name)
             get_linux_crontab(mount_path, computer_name)
             #create_volatility_profile(mount_path)
-            get_files_of_interest(mount_path, computer_name, platform)
+            get_files_of_interest(mount_path, computer_name, platform, threads_number)
         elif platform == "Windows":
             computer_name = get_windows_machine_name(mount_path)
             if image_path:
@@ -3423,7 +3424,7 @@ if len(sys.argv) > 1:
             get_windows_browsing_history(mount_path, computer_name)
             get_windows_browsing_data(mount_path, computer_name)
             hayabusa_evtx(mount_path, computer_name)
-            get_files_of_interest(mount_path, computer_name, platform)
+            get_files_of_interest(mount_path, computer_name, platform, threads_number)
             #extract_windows_evtx
         else:
             print(yellow("[!] Unknown OS"))
