@@ -7,6 +7,7 @@
 #. Requirements : 
 #- hayabusa in the folder of the script
 #- regripper in the folder of the script
+#- analyzeMFT.py in the folder of the script
 #- python-regristry : https://github.com/williballenthin/python-registry
 #- and all libraries that are imported 
 #- tabulate pour regipy
@@ -2712,7 +2713,8 @@ def find_files_chunk(mount_path, file_pattern):
     result = subprocess.run(find_cmd, shell=True, capture_output=True, text=True)
     return result.stdout.splitlines()
 
-def get_files_of_interest(mount_path, computer_name, platform):
+
+def get_files_of_interest(mount_path, computer_name, platform, threads_number):
     run_find_crypto = input("Do you want to launch some files of interest & crypto stuff research? It will be quite long? (yes/no): ").strip().lower()
     if run_find_crypto != "yes":
         return
@@ -2729,21 +2731,44 @@ def get_files_of_interest(mount_path, computer_name, platform):
                             "*.tbl", "*.mdf", "*.ndf", "*.ldf", "*.bson", "*.json", "*.dat", "*.db", "*.sqlite",
                             "*.dmp", "pagefile.sys", "*.sh", "*.ps1", "*.py", "*.pl"]
 
-    num_threads = 6
+    num_threads = threads_number
     files_found = []
 
     # Lancer la recherche en parallèle
     with ThreadPoolExecutor(max_workers=num_threads) as executor:
         futures = {executor.submit(find_files_chunk, mount_path, pattern): pattern for pattern in files_to_search + file_types_to_search}
-
+        '''
         for future in as_completed(futures):
+            print(future.result())
             files_found.extend(future.result())
-
+        '''
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+                for path in result:
+                    try:
+                        #print(path.encode('utf-8', errors='replace').decode())  # Affichage propre
+                        files_found.append(path)
+                    except Exception as e:
+                        print(f"Error appending path: {e}")
+            except Exception as e:
+                print(f"Error in thread: {e}")
     # Ajouter les fichiers sans extension en parallèle
-    find_cmd_no_extension = f"find {mount_path} -type f ! -name '*.*'"
-    result_no_extension = subprocess.run(find_cmd_no_extension, shell=True, capture_output=True, text=True)
-    files_found.extend(result_no_extension.stdout.splitlines())
-
+    try:
+        result_no_extension = subprocess.run(
+            find_cmd_no_extension,
+            shell=True,
+            capture_output=True,
+            text=True,
+            errors='replace'  # uniquement valide pour open(), pas ici
+        )
+        for path in result_no_extension.stdout.splitlines():
+            try:
+                files_found.append(path)
+            except Exception as e:
+                print(f"Error appending no-extension path: {e}")
+    except Exception as e:
+        print(f"Error executing find command: {e}")
 
     # Split files into chunks for multithreading
     chunk_size = len(files_found) // num_threads + 1
@@ -2757,8 +2782,10 @@ def get_files_of_interest(mount_path, computer_name, platform):
             executor.submit(process_chunk, chunk, computer_name, csv_queue, thread_id)
             for thread_id, chunk in enumerate(file_chunks)
         ]
+        '''
         for future in futures:
             future.result()
+        '''
     print("[+] Writing results to CSV...")
     with open(output_file, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=['computer_name', 'type', 'match', 'source_file'])
@@ -2996,7 +3023,7 @@ def process_crypto_chunk(chunk, computer_name, files_to_search, bip39_words, csv
 
 
 
-def crypto_search(computer_name, mount_path):
+def crypto_search(computer_name, mount_path, threads_number):
     print(f"Looking now for crypto elements")
     output_file = f"{script_path}/{result_folder}/crypto.csv"
     files_to_search = [
@@ -3008,18 +3035,33 @@ def crypto_search(computer_name, mount_path):
     csv_columns = ['computer_name', 'type', 'match', 'source_file']
     mnemo = Mnemonic("english")
     bip39_words = set(mnemo.wordlist)  # Set des 2048 mots BIP39
-    num_threads = 6
+    num_threads = threads_number
 
     # Collect all files
     files_found = []
     for file_type in files_to_search + file_types_to_search:
         find_cmd = f"find {mount_path} -type f -name '{file_type}'"
-        result_find = subprocess.run(find_cmd, shell=True, capture_output=True, text=True)
-        files_found.extend(result_find.stdout.splitlines())
-
+        try:
+            result_find = subprocess.run(find_cmd, shell=True, capture_output=True, text=True, errors='replace')
+            for path in result_find.stdout.splitlines():
+                try:
+                    files_found.append(path)
+                except Exception as e:
+                    print(f"Error appending no-extension path: {e}")
+        except Exception as e:
+            print(f"Error executing find command: {e}")
+    
+    ## Collect files without extension
     find_cmd_no_extension = f"find {mount_path} -type f ! -name '*.*'"
-    result_no_extension = subprocess.run(find_cmd_no_extension, shell=True, capture_output=True, text=True)
-    files_found.extend(result_no_extension.stdout.splitlines())
+    try:
+        result_no_extension = subprocess.run(find_cmd_no_extension, shell=True, capture_output=True, text=True, errors='replace')
+        for path in result_no_extension.stdout.splitlines():
+            try:
+                files_found.append(path)
+            except Exception as e:
+                print(f"Error appending no-extension path: {e}")
+    except Exception as e:
+        print(f"Error executing find command: {e}")
 
     # Split files into chunks for multithreading
     chunk_size = len(files_found) // num_threads + 1
@@ -3186,13 +3228,23 @@ def get_mft(computer_name, image_path, byte_offset):
     except Exception as e:
         print(red(f"[-] Error extracting or parsing MFT: {e}"))
 
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(
+    description="""Mount and Triage. Python Forensic Script
+
+Exemple :
+    python3 MaT.py -f /mnt/folder/image.E01 -d /mnt/mounted_analysis_folder -t 6
+""",
+    formatter_class=argparse.RawTextHelpFormatter
+)
+
 parser.add_argument("-f", "--image", required=False, help="Path to disk image (.raw, .img, .qcow2, .E01)")
 parser.add_argument("-d", "--mount", required=True, help="Mount directory")
+parser.add_argument("-t", "--threads", required=False, type=int, default=4, help="Number of threads")
 args = parser.parse_args()
 
 image_path = args.image
 mount_path = args.mount
+threads_number = args.threads
 
 if image_path:
     if not os.path.isfile(image_path):
@@ -3374,7 +3426,7 @@ if len(sys.argv) > 1:
             get_files_of_interest(mount_path, computer_name, platform)
             #extract_windows_evtx
         else:
-            print("Unknown OS")
+            print(yellow("[!] Unknown OS"))
             run_search = input("The mouting point isn't a filesystem, but do you can launch some files of interest research? It will be quite long? (yes/no): ").strip().lower()
             if run_search == "yes":
                 computer_name = "Unknown"
