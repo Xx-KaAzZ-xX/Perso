@@ -555,13 +555,15 @@ def list_connections(mount_path, computer_name):
             source_file = "journal_dir"
             #grep_cmd = f"journalctl -D {journal_dir} | grep 'Accepted'"
             #journalctl_cmd = ["journalctl", "-D", journal_dir, "--grep=Accepted", "--no-pager", "--output=short"]
-            journalctl_cmd = f"journalctl -D {journal_dir} --grep=Accepted --no-pager --output=short"
+            journalctl_cmd = f"journalctl -D {journal_dir} --grep=Accepted --no-pager --output=short-unix"
             result_cmd = subprocess.run(journalctl_cmd, shell=True, capture_output=True, text=True)
             for line in result_cmd.stdout.splitlines():
                 parts = line.split()
                 if "Accepted" in parts:
                     try:
-                        connection_date = parts[0] + " " + parts[1] + " " + parts[2]
+                        #connection_date = parts[0] + " " + parts[1] + " " + parts[2]
+                        connection_timestamp = float(parts[0])
+                        connection_date = datetime.fromtimestamp(connection_timestamp)
                         user_index = parts.index("for") + 1
                         ip_index = parts.index("from") + 1
                         user = parts[user_index]
@@ -714,7 +716,7 @@ def get_nginx_info(computer_name, mount_path):
     nginx_dir = os.path.join(mount_path, "etc/nginx") 
 
     output_file = os.path.join(script_path, result_folder, "linux_websites.csv")
-    csv_columns = ['computer_name', 'website_name', 'listening_port', 'webserver']
+    csv_columns = ['computer_name', 'website_name', 'website_root', 'listening_port', 'webserver']
     
     try:
         with open(output_file, mode='w', newline='', encoding='utf-8') as f:
@@ -739,14 +741,17 @@ def get_nginx_info(computer_name, mount_path):
                             content = vhost.read()
                             # Récupère le nom du site (server_name) et port d'écoute (listen)
                             server_name_match = re.search(r'^\s*server_name\s+([^;]+);', content, re.MULTILINE)
+                            root_match = re.search(r'^\s*root\s+([^;]+);', content, re.MULTILINE)
                             listen_match = re.search(r'^\s*listen\s+(\d+)', content, re.MULTILINE)
 
                             website_name = server_name_match.group(1).strip() if server_name_match else 'unknown'
                             listening_port = listen_match.group(1).strip() if listen_match else '80'  # défaut 80
+                            website_root = root_match.group(1).strip() if root_match else 'unknown'
 
                             writer.writerow({
                                 'computer_name': computer_name,
                                 'website_name': website_name,
+                                'website_root': website_root,
                                 'listening_port': listening_port,
                                 'webserver': 'nginx'
                             })
