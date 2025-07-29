@@ -2714,7 +2714,7 @@ def find_files_chunk(mount_path, file_pattern):
     return result.stdout.splitlines()
 
 
-def get_files_of_interest(mount_path, computer_name, platform, threads_number):
+def get_files_of_interest(mount_path, computer_name, threads_number, platform):
     run_find_crypto = input("Do you want to launch some files of interest & crypto stuff research? It will be quite long? (yes/no): ").strip().lower()
     if run_find_crypto != "yes":
         return
@@ -3405,7 +3405,7 @@ if len(sys.argv) > 1:
             get_linux_browsing_data(mount_path, computer_name)
             get_linux_crontab(mount_path, computer_name)
             #create_volatility_profile(mount_path)
-            get_files_of_interest(mount_path, computer_name, platform, threads_number)
+            get_files_of_interest(mount_path, computer_name, threads_number, platform)
         elif platform == "Windows":
             computer_name = get_windows_machine_name(mount_path)
             if image_path:
@@ -3424,14 +3424,14 @@ if len(sys.argv) > 1:
             get_windows_browsing_history(mount_path, computer_name)
             get_windows_browsing_data(mount_path, computer_name)
             hayabusa_evtx(mount_path, computer_name)
-            get_files_of_interest(mount_path, computer_name, platform, threads_number)
+            get_files_of_interest(mount_path, computer_name, threads_number, platform)
             #extract_windows_evtx
         else:
             print(yellow("[!] Unknown OS"))
             run_search = input("The mouting point isn't a filesystem, but do you can launch some files of interest research? It will be quite long? (yes/no): ").strip().lower()
             if run_search == "yes":
                 computer_name = "Unknown"
-                get_files_of_interest(mount_path, computer_name, platform="Unknown")
+                get_files_of_interest(mount_path, computer_name, threads_number, platform="Unknown")
             else:
                 print("Script is going to exit.")
                 sys.exit(0)
