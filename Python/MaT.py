@@ -299,7 +299,7 @@ def get_network_info(mount_path, computer_name):
                             interfaces.append(current_entry)
 
     # --- netplan ---
-    elif os.path.isdir(netplan_dir):
+    if os.path.isdir(netplan_dir):
         for fname in os.listdir(netplan_dir):
             if fname.endswith(".yml") or fname.endswith(".yaml"):
                 try:
@@ -560,7 +560,7 @@ def list_connections(mount_path, computer_name):
             result_cmd = subprocess.run(journalctl_cmd, shell=True, capture_output=True, text=True)
             for line in result_cmd.stdout.splitlines():
                 parts = line.split()
-                if "Accepted" in parts:
+                if "Accepted" in parts and "for" in parts:
                     try:
                         #connection_date = parts[0] + " " + parts[1] + " " + parts[2]
                         connection_timestamp = float(parts[0])
@@ -579,7 +579,8 @@ def list_connections(mount_path, computer_name):
                         })
                         counter += 1
                     except Exception as e:
-                        print(red(f"Error retrieving connections : {e}"))
+                        #print(red(f"Error retrieving connections : {e}"))
+                        continue
 
     if counter >= 1:
         print(yellow(f"Removing duplicates entries into {output_file}"))
@@ -2742,11 +2743,6 @@ def get_files_of_interest(mount_path, computer_name, threads_number, platform):
     # Lancer la recherche en parallèle
     with ThreadPoolExecutor(max_workers=num_threads) as executor:
         futures = {executor.submit(find_files_chunk, mount_path, pattern): pattern for pattern in files_to_search + file_types_to_search}
-        '''
-        for future in as_completed(futures):
-            print(future.result())
-            files_found.extend(future.result())
-        '''
         for future in as_completed(futures):
             try:
                 result = future.result()
@@ -2788,10 +2784,7 @@ def get_files_of_interest(mount_path, computer_name, threads_number, platform):
             executor.submit(process_chunk, chunk, computer_name, csv_queue, thread_id)
             for thread_id, chunk in enumerate(file_chunks)
         ]
-        '''
-        for future in futures:
-            future.result()
-        '''
+
     print("[+] Writing results to CSV...")
     with open(output_file, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=['computer_name', 'type', 'match', 'source_file'])
@@ -2966,6 +2959,28 @@ def validate_ethereum_address(eth_address):
     
     return checksum_address    
 
+def has_internet_connection():
+    """
+    Verify if the machine has internet access or not
+    """
+    try:
+        response = requests.get("https://www.google.com", timeout=5)
+        if response.status_code == 200:
+            return True
+    except Exception:
+        return False
+
+def validate_btc_transaction(txid):
+    try:
+        url = f"https://mempool.space/api/tx/{txid}"
+        response = requests.get(url, timeout=2)
+        if response.status_code == 200:
+                return True
+        else:
+            #print(f"{txid} is not valid")
+            return False
+    except Exception:
+        return False
 
 
 def process_crypto_chunk(chunk, computer_name, files_to_search, bip39_words, csv_queue, thread_id):
@@ -3089,6 +3104,8 @@ def crypto_search(computer_name, mount_path, threads_number):
                 print(red(f"Thread encoutered an error: {e}"))
 
     # Écrire les résultats dans le fichier CSV
+    internet_access = has_internet_connection()
+    print(internet_access)
     with open(output_file, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=csv_columns)
         writer.writeheader()
@@ -3101,7 +3118,7 @@ def crypto_search(computer_name, mount_path, threads_number):
         df_unique = df.drop_duplicates().copy()
         #df_unique.to_csv(output_file, index=False)
         if df_unique.shape[0] > 0:
-            print(f"Verifying crypto address...")
+            print(f"Verifying crypto elements...")
             df_unique['verified'] = 'unknown'
             for index, row in df_unique.iterrows():
                 if row['type'] == 'litecoin_legacy':
@@ -3120,6 +3137,11 @@ def crypto_search(computer_name, mount_path, threads_number):
                 if row['type'] == 'ethereum_address':
                     is_valid = validate_ethereum_address(row['match'])
                     df_unique.at[index, 'verified'] = 'true' if is_valid else 'false'
+                if row['type'] == 'bitcoin_txid' and internet_access is True:
+                    txid = row['match']
+                    is_valid = validate_btc_transaction(txid)
+                    df_unique.at[index, 'verified'] = 'true' if is_valid else 'false'
+
             # Filtrer les lignes où 'verified' est 'false'
             df_unique = df_unique[df_unique['verified'] != 'false']
             print(green(f"{df_unique.shape[0]} unique rows written to {output_file}"))
