@@ -2598,7 +2598,8 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
         for file_path in chunk:
             result = {"computer_name": computer_name, "match": "", "source_file": file_path}
             yara_result = []
-            rule = "yara/files_rule.yar"
+            #rule = "yara/files_rule.yar"
+            yara_rules = ["yara/files_rule.yar", "yara/user_rule.yar", "yara/pwd_rule.yar"]
             extension = Path(file_path).suffix
             filename = Path(file_path).name
             #with open(file_to_analyze_per_chunk, "a") as file:
@@ -2607,10 +2608,10 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
 
             # Exclude Linux documentation and source files
             #if "/doc/" in file_path or "/usr/share/" in file_path or "/usr/lib" or "/usr/src/" in file_path:
-            if "/doc/" in file_path or "/usr/share/" in file_path or "/usr/lib/" in file_path:
+            if "/doc/" in file_path or "/usr/share/" in file_path or "/usr/lib/" in file_path or "/usr/libexec/" in file_path:
                 local_pbar.update(1)
                 continue
-            elif "/usr/src/" in file_path:
+            elif "/usr/src/" in file_path or "/lib/firmware/" in file_path:
                 local_pbar.update(1)
                 continue
             elif filename == "docker-compose.yml" or filename == "docker-compose.yaml":
@@ -2653,21 +2654,7 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
                     result["match"].append(db_name)
                 result.update({"type": "database_postgresql"})
                 csv_queue.put(result)
-            elif extension in {"mdf", "ndf", "ldf"}:
-                parent_dir = Path(file_path).parent
-                mdf_files = list(parent_dir.glob("*.mdf"))
-                ldf_files = list(parent_dir.glob("*.ldf"))
-                if mdf_files:  # Vérifie qu'il y a bien un .mdf, qui est le cœur de la DB
-                    for mdf in mdf_files:
-                        db_name = mdf.stem  # Récupère le nom de fichier sans extension (nom de la DB)
-                        if not result["match"]:
-                            result["match"] = []
-                        elif not isinstance(result["match"], list):
-                            result["match"] = [result["match"]]
-                        if db_name not in result["match"]:
-                            result["match"].append(db_name)
-                    result.update({"type": "database_sqlserver"})
-                    csv_queue.put(result)
+
             elif extension in {"mdf", "ndf", "ldf"}:
                 parent_dir = Path(file_path).parent
                 mdf_files = list(parent_dir.glob("*.mdf"))
@@ -2682,9 +2669,7 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
                             result["match"] = [result["match"]]
                         if db_name not in result["match"]:
                             result["match"].append(db_name)
-            
-                    result.update({"type": "database_sqlserver"})
-                    csv_queue.put(result)
+
             elif "sqlite" in extension:
                 if "AppData/Local/Packages" in file_path or "AppData/Roaming/Mozilla/Firefox/Profiles" in file_path:
                     continue
@@ -2701,10 +2686,11 @@ def process_chunk(chunk, computer_name, csv_queue, thread_id):
                 result.update({"type": "minidump_file"})
                 csv_queue.put(result)
             else:
-                yara_result = analyze_yara(computer_name, file_path, rule)
-                if yara_result:
-                    for item in yara_result:
-                        csv_queue.put(item)
+                for rule in yara_rules:
+                    yara_result = analyze_yara(computer_name, file_path, rule)
+                    if yara_result:
+                        for item in yara_result:
+                            csv_queue.put(item)
 
             local_pbar.update(1)
 
@@ -2826,6 +2812,12 @@ def get_files_of_interest(mount_path, computer_name, threads_number, platform):
 
         # Supprimer les doublons globaux en prenant en compte toutes les colonnes
         df_unique = df_unique.drop_duplicates()
+
+        #erase all emails from Linux binary files
+        df_unique = df_unique[~((df_unique['type'] == 'email_addr') | (df_unique['type'] == 'potential_creds') & (df_unique['source_file'].str.contains('/usr/bin/')| df_unique['source_file'].str.contains('/sbin/') ))]
+        #erase all false positives from Docker dir
+        df_unique = df_unique[~((df_unique['source_file'].str.contains('/docker')& df_unique['source_file'].str.contains('/sha256') ))]
+
 
 
 
